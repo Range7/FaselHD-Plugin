@@ -1,6 +1,6 @@
 {
-  "name": "FaselHD + Krmzy",
-  "version": "1.1",
+  "name": "FaselHD + MovieBox",
+  "version": "1.2",
   "scrapers": [
     {
       "id": "nuvio-faselhd",
@@ -16,17 +16,17 @@
       "contentLanguage": ["en", "ar", "ja"]
     },
     {
-      "id": "nuvio-krmzy",
-      "name": "Krmzy",
-      "description": "Arabic Streams from Krmzy Server - Turkish Series (~8s)",
+      "id": "nuvio-moviebox",
+      "name": "MovieBox",
+      "description": "Direct fast streams for Hollywood releases - m3u8/mp4",
       "version": "1.0",
-      "author": "maje7d",
+      "author": "afanag",
       "supportedTypes": ["movie", "tv"],
-      "filename": "providers/krmzy.js",
+      "filename": "providers/moviebox.js",
       "enabled": true,
-      "formats": ["iframe"],
-      "logo": "https://www.qrmzi.tv/wp-content/uploads/2025/11/qrmzitv-logo.png",
-      "contentLanguage": ["ar"]
+      "formats": ["m3u8", "mp4", "mkv"],
+      "logo": "https://upload.wikimedia.org/wikipedia/commons/thumb/6/66/Moviebox_Logo.png/320px-Moviebox_Logo.png",
+      "contentLanguage": ["en"]
     }
   ]
 }
