@@ -10,7 +10,7 @@ var LANG_MAP = {
   "ko": "Korean 🇰🇷", "ja": "Japanese 🇯🇵", "es": "Spanish 🇪🇸",
   "fr": "French 🇫🇷", "de": "German 🇩🇪", "it": "Italian 🇮🇹",
   "pt": "Portuguese 🇵🇹", "ru": "Russian 🇷🇺", "zh": "Chinese 🇨🇳",
-  "tr": "Turkish 🇹🇷", "ar": "Arabic 🇸🇦", "hi": "Hindi 🇮🇳",
+  "tr": "Turkish 🇹🇷", "ar": "Arabic 🇮🇶", "hi": "Hindi 🇮🇳",
   "en": "English 🇺🇸", "pl": "Polish 🇵🇱", "th": "Thai 🇹🇭",
   "id": "Indonesian 🇮🇩", "vi": "Vietnamese 🇻🇳", "tl": "Tagalog 🇵🇭",
   "sv": "Swedish 🇸🇪", "no": "Norwegian 🇳🇴", "da": "Danish 🇩🇰",
