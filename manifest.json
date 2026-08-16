@@ -14,19 +14,6 @@
       "formats": ["m3u8"],
       "logo": "https://raw.githubusercontent.com/nvmindl/nuvio-providers/main/Assets/faselhdx.png",
       "contentLanguage": ["en", "ar", "ja"]
-    },
-    {
-      "id": "nuvio-krmzy",
-      "name": "Krmzy",
-      "description": "Arabic Streams from Krmzy Server (~8s)",
-      "version": "1.0",
-      "author": "maje7d",
-      "supportedTypes": ["movie", "tv"],
-      "filename": "providers/krmzy.js",
-      "enabled": true,
-      "formats": ["iframe"],
-      "logo": "https://krmzi.net/wp-content/uploads/2024/01/logo.png",
-      "contentLanguage": ["ar"]
     }
   ]
 }
