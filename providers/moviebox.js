@@ -1,16 +1,28 @@
 // MovieBox Provider for Nuvio
-// Deobfuscated and cleaned for Hermes compatibility
+// Original Audio ONLY - removes English & Hindi dubs
 // Uses CineScrape API via pengu.uk
 
 var PROVIDER_NAME = "MovieBox";
 var CINESCRAPE_BASE = 'https://pengu.uk/%7B%22auth_token%22%3A%22kN4wJWA4avMWX-T4TFA3cKiFAKWC0_FFyJZMvfdAFEY%22%7D';
 var TMDB_API_KEY = "439c478a771f35c05022f9feabcca01c";
 
+var LANG_MAP = {
+  "ko": "Korean 🇰🇷", "ja": "Japanese 🇯🇵", "es": "Spanish 🇪🇸",
+  "fr": "French 🇫🇷", "de": "German 🇩🇪", "it": "Italian 🇮🇹",
+  "pt": "Portuguese 🇵🇹", "ru": "Russian 🇷🇺", "zh": "Chinese 🇨🇳",
+  "tr": "Turkish 🇹🇷", "ar": "Arabic 🇸🇦", "hi": "Hindi 🇮🇳",
+  "en": "English 🇺🇸", "pl": "Polish 🇵🇱", "th": "Thai 🇹🇭",
+  "id": "Indonesian 🇮🇩", "vi": "Vietnamese 🇻🇳", "tl": "Tagalog 🇵🇭",
+  "sv": "Swedish 🇸🇪", "no": "Norwegian 🇳🇴", "da": "Danish 🇩🇰",
+  "fi": "Finnish 🇫🇮", "nl": "Dutch 🇳🇱", "cs": "Czech 🇨🇿",
+  "hu": "Hungarian 🇭🇺", "ro": "Romanian 🇷🇴", "el": "Greek 🇬🇷",
+  "he": "Hebrew 🇮🇱", "uk": "Ukrainian 🇺🇦", "ms": "Malay 🇲🇾"
+};
+
 function onSettings() {
   return [
     { type: "header", label: "Audio Preferences" },
-    { type: "toggle", key: "langEnglish", label: "Enable English 🇺🇸", defaultValue: true },
-    { type: "toggle", key: "langHindi", label: "Enable Hindi 🇮🇳", defaultValue: true }
+    { type: "toggle", key: "originalOnly", label: "Original Audio Only 🎙️", defaultValue: true }
   ];
 }
 
@@ -25,8 +37,7 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     return res.json();
   }).then(function(tmdbData) {
     var settings = (typeof globalThis !== "undefined" && globalThis.SCRAPER_SETTINGS) ? globalThis.SCRAPER_SETTINGS : {};
-    var langEnglish = settings.langEnglish !== false;
-    var langHindi = settings.langHindi !== false;
+    var originalOnly = settings.originalOnly !== false;
 
     var imdbId = (tmdbData.external_ids && tmdbData.external_ids.imdb_id) || tmdbData.imdb_id;
     if (!imdbId) {
@@ -44,6 +55,9 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
       year = "2026";
     }
 
+    var originalLang = tmdbData.original_language || "";
+    var originalLangName = LANG_MAP[originalLang] || (originalLang.toUpperCase() + " 🌍");
+
     var scrapeUrl;
     if (isSeries) {
       scrapeUrl = CINESCRAPE_BASE + "/stream/series/" + imdbId + ":" + seasonNum + ":" + episodeNum + ".json";
@@ -52,6 +66,7 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     }
 
     console.log("[MovieBox] Fetching: " + scrapeUrl);
+    console.log("[MovieBox] Original language: " + originalLang + " (" + originalLangName + ")");
 
     return fetch(scrapeUrl).then(function(res) {
       return res.json();
@@ -69,24 +84,45 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         }
 
         var streamTitle = (stream.title || stream.description || "").toLowerCase();
-        var lang = "English 🇺🇸";
-        var isHindi = false;
+        var lang = originalLangName;
+        var isDub = false;
+        var isMulti = false;
 
-        if (/hindi|hin|dual/.test(streamTitle)) {
-          lang = "Hindi 🇮🇳";
-          isHindi = true;
-        } else if (/multi|🌐/.test(streamTitle)) {
-          lang = "Multi 🌐";
+        // Detect if this is an English dub
+        if (/\b(english|eng|en\b|dubbed|dub\b).*\b(dub|dubbed|audio)\b/.test(streamTitle) ||
+            (/\benglish\b/.test(streamTitle) && !/\bmulti\b/.test(streamTitle) && !/\boriginal\b/.test(streamTitle))) {
+          isDub = true;
+          lang = "English Dub 🇺🇸";
+        }
+        // Detect if this is a Hindi dub
+        else if (/\b(hindi|hin|hi\b).*\b(dub|dubbed|audio)\b/.test(streamTitle) ||
+                 (/\bhindi\b/.test(streamTitle) && !/\bmulti\b/.test(streamTitle))) {
+          isDub = true;
+          lang = "Hindi Dub 🇮🇳";
+        }
+        // Detect Multi Audio (has original + dubs)
+        else if (/\bmulti\b/.test(streamTitle) || /🌐/.test(streamTitle)) {
+          isMulti = true;
+          lang = "Multi Audio 🌐 (" + originalLangName + ")";
+        }
+        // Detect if title explicitly mentions original language
+        else if (originalLang && new RegExp("\\b" + originalLang + "\\b").test(streamTitle)) {
+          lang = originalLangName;
         }
 
-        if (isHindi && !langHindi) return;
-        if (!isHindi && !langEnglish) return;
+        // If originalOnly is enabled, skip English/Hindi dubs
+        if (originalOnly && isDub) {
+          console.log("[MovieBox] Skipping dub: " + lang);
+          return;
+        }
 
         filtered.push({
           url: stream.url,
           title: stream.title,
           description: stream.description,
-          lang: lang
+          lang: lang,
+          isDub: isDub,
+          isMulti: isMulti
         });
       });
 
@@ -103,8 +139,6 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
 
         var sizeMatch = (stream.title || "").match(/(\d+(?:\.\d+)?\s*(?:GB|MB))/i);
         var size = sizeMatch ? sizeMatch[1] : "1.99 GB";
-
-        var format = /\b(mp4|avi|m4v)\b/.test(titleLower) ? "MP4" : "MKV";
 
         var cleanLang = stream.lang.replace(/[\uE000-\uF8FF]|\uD83C[\uDC00-\uDFFF]|\uD83D[\uDC00-\uDFFF]|[\u2011-\u26FF]|\uD83E[\uDD00-\uDFFF]/g, "").trim();
 
@@ -137,7 +171,7 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         });
       });
 
-      console.log("[MovieBox] Found " + result.length + " streams");
+      console.log("[MovieBox] Found " + result.length + " original audio streams");
       return result;
     });
   }).catch(function(err) {
