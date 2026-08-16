@@ -1,5 +1,5 @@
 {
-  "name": "FaselHD + MovieBox + Asia2TV",
+  "name": "FaselHD + MovieBox + Cee",
   "version": "1.3",
   "scrapers": [
     {
@@ -29,17 +29,17 @@
       "contentLanguage": ["en", "ko", "ja", "es", "fr", "de", "tr", "ar", "zh"]
     },
     {
-      "id": "nuvio-asia2tv",
-      "name": "Asia2TV 2",
-      "description": "Arabic subbed Asian dramas - Korean, Japanese, Chinese (~8s)",
+      "id": "nuvio-cee",
+      "name": "Cee",
+      "description": "Arabic movies & series with Arabic subs - direct MP4 links (~5s)",
       "version": "1.0",
       "author": "Abodabodd (ported)",
-      "supportedTypes": ["tv", "movie"],
-      "filename": "providers/asia2tv.js",
+      "supportedTypes": ["movie", "tv"],
+      "filename": "providers/cee.js",
       "enabled": true,
-      "formats": ["iframe"],
-      "logo": "https://ww1.asia2tv.pw/wp-content/uploads/2023/01/asia2tv-logo.png",
-      "contentLanguage": ["ar", "ko", "ja", "zh"]
+      "formats": ["mp4"],
+      "logo": "https://cee.buzz/favicon.ico",
+      "contentLanguage": ["ar", "en"]
     }
   ]
 }
