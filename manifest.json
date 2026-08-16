@@ -1,6 +1,6 @@
 {
-  "name": "FaselHD + Krmzy",
-  "version": "1.1",
+  "name": "FaselHD",
+  "version": "1.0",
   "scrapers": [
     {
       "id": "nuvio-faselhd",
