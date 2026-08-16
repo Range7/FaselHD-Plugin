@@ -1,6 +1,6 @@
 {
-  "name": "FaselHD + MovieBox",
-  "version": "1.2",
+  "name": "FaselHD + MovieBox + Asia2TV",
+  "version": "1.3",
   "scrapers": [
     {
       "id": "nuvio-faselhd",
@@ -18,15 +18,28 @@
     {
       "id": "nuvio-moviebox",
       "name": "MovieBox",
-      "description": "Direct streams via CineScrape - English & Hindi (~3s)",
+      "description": "Direct streams - Original Audio Only (~3s)",
       "version": "1.0",
-      "author": "afanag (deobfuscated)",
+      "author": "afanag (modified)",
       "supportedTypes": ["movie", "tv"],
       "filename": "providers/moviebox.js",
       "enabled": true,
-      "formats": ["mp4", "mkv"],
+      "formats": ["mp4", "mkv", "m3u8"],
       "logo": "https://upload.wikimedia.org/wikipedia/commons/thumb/6/66/Moviebox_Logo.png/320px-Moviebox_Logo.png",
-      "contentLanguage": ["en", "hi"]
+      "contentLanguage": ["en", "ko", "ja", "es", "fr", "de", "tr", "ar", "zh"]
+    },
+    {
+      "id": "nuvio-asia2tv",
+      "name": "Asia2TV 2",
+      "description": "Arabic subbed Asian dramas - Korean, Japanese, Chinese (~8s)",
+      "version": "1.0",
+      "author": "Abodabodd (ported)",
+      "supportedTypes": ["tv", "movie"],
+      "filename": "providers/asia2tv.js",
+      "enabled": true,
+      "formats": ["iframe"],
+      "logo": "https://ww1.asia2tv.pw/wp-content/uploads/2023/01/asia2tv-logo.png",
+      "contentLanguage": ["ar", "ko", "ja", "zh"]
     }
   ]
 }
