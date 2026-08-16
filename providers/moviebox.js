@@ -1,6 +1,6 @@
 // MovieBox Provider for Nuvio
 // Original Audio ONLY - removes English & Hindi dubs
-// Uses CineScrape API via pengu.uk
+// FIXED: Duplicate streams removed
 
 var PROVIDER_NAME = "MovieBox";
 var CINESCRAPE_BASE = 'https://pengu.uk/%7B%22auth_token%22%3A%22kN4wJWA4avMWX-T4TFA3cKiFAKWC0_FFyJZMvfdAFEY%22%7D';
@@ -66,7 +66,6 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     }
 
     console.log("[MovieBox] Fetching: " + scrapeUrl);
-    console.log("[MovieBox] Original language: " + originalLang + " (" + originalLangName + ")");
 
     return fetch(scrapeUrl).then(function(res) {
       return res.json();
@@ -76,12 +75,22 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         return [];
       }
 
+      var seenUrls = {};
       var filtered = [];
+
       data.streams.forEach(function(stream) {
         // Skip blocked domains
         if (stream.url && stream.url.includes("bcdnxw.hakunaymatata.com")) {
           return;
         }
+
+        // DEDUPLICATION: Skip duplicate URLs
+        var url = stream.url || "";
+        if (seenUrls[url]) {
+          console.log("[MovieBox] Skipping duplicate URL: " + url.substring(0, 50) + "...");
+          return;
+        }
+        seenUrls[url] = true;
 
         var streamTitle = (stream.title || stream.description || "").toLowerCase();
         var lang = originalLangName;
@@ -100,24 +109,22 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
           isDub = true;
           lang = "Hindi Dub 🇮🇳";
         }
-        // Detect Multi Audio (has original + dubs)
+        // Detect Multi Audio
         else if (/\bmulti\b/.test(streamTitle) || /🌐/.test(streamTitle)) {
           isMulti = true;
           lang = "Multi Audio 🌐 (" + originalLangName + ")";
         }
-        // Detect if title explicitly mentions original language
         else if (originalLang && new RegExp("\\b" + originalLang + "\\b").test(streamTitle)) {
           lang = originalLangName;
         }
 
-        // If originalOnly is enabled, skip English/Hindi dubs
         if (originalOnly && isDub) {
           console.log("[MovieBox] Skipping dub: " + lang);
           return;
         }
 
         filtered.push({
-          url: stream.url,
+          url: url,
           title: stream.title,
           description: stream.description,
           lang: lang,
@@ -126,7 +133,7 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         });
       });
 
-      // Group by quality + language
+      // Group by quality + language, but keep only unique URLs per group
       var groups = {};
       filtered.forEach(function(stream) {
         var titleLower = (stream.title || "").toLowerCase();
@@ -171,7 +178,7 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         });
       });
 
-      console.log("[MovieBox] Found " + result.length + " original audio streams");
+      console.log("[MovieBox] Found " + result.length + " unique original audio streams");
       return result;
     });
   }).catch(function(err) {
