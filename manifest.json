@@ -18,15 +18,15 @@
     {
       "id": "nuvio-moviebox",
       "name": "MovieBox",
-      "description": "Direct fast streams for Hollywood releases - m3u8/mp4",
+      "description": "Direct streams via CineScrape - English & Hindi (~3s)",
       "version": "1.0",
-      "author": "afanag",
+      "author": "afanag (deobfuscated)",
       "supportedTypes": ["movie", "tv"],
       "filename": "providers/moviebox.js",
       "enabled": true,
-      "formats": ["m3u8", "mp4", "mkv"],
+      "formats": ["mp4", "mkv"],
       "logo": "https://upload.wikimedia.org/wikipedia/commons/thumb/6/66/Moviebox_Logo.png/320px-Moviebox_Logo.png",
-      "contentLanguage": ["en"]
+      "contentLanguage": ["en", "hi"]
     }
   ]
 }
