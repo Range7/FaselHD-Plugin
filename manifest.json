@@ -1,5 +1,5 @@
 {
-  "name": "FaselHD + MovieBox",
+  "name": "FaselHD",
   "version": "1.2",
   "scrapers": [
     {
@@ -14,19 +14,6 @@
       "formats": ["m3u8"],
       "logo": "https://raw.githubusercontent.com/nvmindl/nuvio-providers/main/Assets/faselhdx.png",
       "contentLanguage": ["en", "ar", "ja"]
-    },
-    {
-      "id": "nuvio-moviebox",
-      "name": "MovieBox",
-      "description": "Direct streams - Original Audio Only (~3s)",
-      "version": "1.0",
-      "author": "afanag (modified)",
-      "supportedTypes": ["movie", "tv"],
-      "filename": "providers/moviebox.js",
-      "enabled": true,
-      "formats": ["mp4", "mkv", "m3u8"],
-      "logo": "https://upload.wikimedia.org/wikipedia/commons/thumb/6/66/Moviebox_Logo.png/320px-Moviebox_Logo.png",
-      "contentLanguage": ["en", "ko", "ja", "es", "fr", "de", "tr", "ar", "zh"]
     }
   ]
 }
