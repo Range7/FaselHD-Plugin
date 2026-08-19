@@ -14,6 +14,19 @@
       "formats": ["m3u8"],
       "logo": "https://raw.githubusercontent.com/nvmindl/nuvio-providers/main/Assets/faselhdx.png",
       "contentLanguage": ["en", "ar", "ja"]
+         },
+    {
+      "id": "nuvio-showbox",
+      "name": "ShowBox",
+      "description": "ShowBox streaming with multiple quality options and versions (~5s)",
+      "version": "2.0",
+      "author": "Nuvio Team",
+      "supportedTypes": ["movie", "tv", "anime"],
+      "filename": "providers/showbox.js",
+      "enabled": true,
+      "formats": ["mp4", "mkv"],
+      "logo": "https://files.catbox.moe/4mdxz9.jpeg",
+      "contentLanguage": ["en"]
     }
   ]
 }
