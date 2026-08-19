@@ -1,5 +1,5 @@
 {
-  "name": "FaselHD + Krmzy",
+  "name": "FaselHD",
   "version": "1.3",
   "scrapers": [
     {
@@ -14,19 +14,6 @@
       "formats": ["m3u8"],
       "logo": "https://raw.githubusercontent.com/nvmindl/nuvio-providers/main/Assets/faselhdx.png",
       "contentLanguage": ["en", "ar", "ja"]
-    },
-    {
-      "id": "nuvio-krmzy",
-      "name": "Krmzy",
-      "description": "Arabic Streams from Krmzi.net (~3s)",
-      "version": "1.0.0",
-      "author": "maje7d",
-      "supportedTypes": ["movie", "tv"],
-      "filename": "providers/krmzy.js",
-      "enabled": true,
-      "formats": ["mp4", "m3u8"],
-      "logo": "https://raw.githubusercontent.com/nvmindl/nuvio-providers/main/Assets/krmzy.png",
-      "contentLanguage": ["ar"]
     }
   ]
 }
