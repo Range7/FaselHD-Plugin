@@ -1,7 +1,6 @@
 // Cinemana Scraper for Nuvio Local Scrapers
-// Multi-language exact search + 1080p only + Dubbed & Subtitled (strict verification)
+// ULTRA-STRICT matching | 1080p only | Dubbed & Subtitled verified
 // React Native compatible version (Hermes-safe, no async/await)
-// Format: name="Cinemana | مدبلج عربي/mترجم", title="1080p"
 
 var __async = (__this, __arguments, generator) => {
   return new Promise((resolve, reject) => {
@@ -42,25 +41,27 @@ function safeFetch(url, options, timeout) {
   });
 }
 
-function normalizeText(str) {
-  if (!str) return "";
-  return str.toString().toLowerCase().trim().replace(/\s+/g, " ").replace(/[^\w\s]/g, "");
+// ─── Title Normalization ─────────────────────────────────
+function normalizeTitle(title) {
+  if (!title) return "";
+  return title.toLowerCase()
+    .replace(/[\:\-\–—().,!?'"]/g, " ")
+    .replace(/\s+/g, " ")
+    .replace(/[^a-z0-9\s\u0600-\u06FF]/g, "")  // keep Arabic
+    .replace(/\b(season|s|part|vol|volume|episode|ep|chapter|ch)\s*\d+\b/g, "")
+    .replace(/\bالحلقة\s*\d+\b/g, "")
+    .replace(/\bالموسم\s*\d+\b/g, "")
+    .trim();
 }
 
-function similarityScore(a, b) {
-  var na = normalizeText(a);
-  var nb = normalizeText(b);
-  if (!na || !nb) return 0;
-  if (na === nb) return 100;
-  if (na.indexOf(nb) !== -1 || nb.indexOf(na) !== -1) return 90;
-  var wa = na.split(" ");
-  var wb = nb.split(" ");
-  var common = 0;
-  for (var i = 0; i < wa.length; i++) {
-    if (wa[i].length > 2 && wb.indexOf(wa[i]) !== -1) common++;
-  }
-  if (wa.length > 0) return Math.floor((common / wa.length) * 80);
-  return 0;
+function removeDubWords(title) {
+  if (!title) return "";
+  return title.toLowerCase()
+    .replace(/مدبلج[ة]?/gi, "")
+    .replace(/dubbed/gi, "")
+    .replace(/dub/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function cleanUrl(url) {
@@ -79,19 +80,48 @@ function isDubbedTitle(title) {
   return t.indexOf("مدبلج") !== -1 || t.indexOf("dubbed") !== -1 || t.indexOf("dub") !== -1 || t.indexOf("مدبلجة") !== -1;
 }
 
-function removeDubWords(title) {
-  if (!title) return "";
-  return title.toLowerCase()
-    .replace(/مدبلج[ة]?/g, "")
-    .replace(/dubbed/g, "")
-    .replace(/dub/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
+// ─── ULTRA-STRICT Matching ───────────────────────────────
+function strictMatchScore(resultTitle, tmdbTitle) {
+  var normResult = normalizeTitle(resultTitle);
+  var normTmdb = normalizeTitle(tmdbTitle);
+
+  if (!normResult || !normTmdb) return 0;
+
+  // Exact match
+  if (normResult === normTmdb) return 100;
+
+  // Contains
+  if (normResult.indexOf(normTmdb) !== -1 || normTmdb.indexOf(normResult) !== -1) {
+    var shorter = normResult.length < normTmdb.length ? normResult : normTmdb;
+    var longer = normResult.length < normTmdb.length ? normTmdb : normResult;
+    var coverage = shorter.length / longer.length;
+    if (coverage >= 0.85) {
+      return Math.round(88 + (coverage * 10));
+    }
+  }
+
+  // Word overlap
+  var resultWords = normResult.split(" ").filter(function(w) { return w.length > 2; });
+  var tmdbWords = normTmdb.split(" ").filter(function(w) { return w.length > 2; });
+
+  var matched = 0;
+  tmdbWords.forEach(function(wt) {
+    resultWords.forEach(function(wr) {
+      if (wt === wr || wt.indexOf(wr) !== -1 || wr.indexOf(wt) !== -1) {
+        matched++;
+      }
+    });
+  });
+
+  var wordRatio = tmdbWords.length > 0 ? matched / tmdbWords.length : 0;
+  if (wordRatio >= 0.9) {
+    return Math.round(75 + (wordRatio * 15));
+  }
+
+  return Math.round(wordRatio * 70);
 }
 
-// ============================================================
-// TMDB
-// ============================================================
+// ─── TMDB ────────────────────────────────────────────────
 function getTMDBInfo(tmdbId, mediaType) {
   return __async(this, null, function* () {
     var type = mediaType === "movie" ? "movie" : "tv";
@@ -136,9 +166,7 @@ function getTMDBInfo(tmdbId, mediaType) {
   });
 }
 
-// ============================================================
-// Cinemana API
-// ============================================================
+// ─── Cinemana API ────────────────────────────────────────
 function searchCinemana(query, type) {
   return __async(this, null, function* () {
     var url = CINEMANA_BASE + "/AdvancedSearch?videoTitle=" + encodeURIComponent(query) + "&type=" + type;
@@ -196,48 +224,8 @@ function extractSubtitles(info) {
   return out;
 }
 
-// ============================================================
-// Score a candidate against TMDB info
-// ============================================================
-function scoreCandidate(item, tmdbInfo, isSeries) {
-  var itemTitle = item.en_title || item.ar_title || item.videoTitle || item.title || item.name || "";
-  var itemOriginal = item.other_title || item.original_title || itemTitle;
-  var itemKind = String(item.kind || "");
-  var itemYear = "";
-  if (item.year) itemYear = String(item.year);
-  else if (item.createdate) itemYear = String(item.createdate).substring(0, 4);
-
-  var isItemSeries = itemKind === "2";
-  if (isSeries !== isItemSeries) return { score: -999, isDubbed: false, title: itemTitle };
-
-  var score = 0;
-  for (var t = 0; t < tmdbInfo.titles.length; t++) {
-    score = Math.max(score, similarityScore(itemTitle, tmdbInfo.titles[t]));
-    score = Math.max(score, similarityScore(itemOriginal, tmdbInfo.titles[t]));
-  }
-
-  // Also score against title WITHOUT dub words (for dubbed results)
-  var cleanItemTitle = removeDubWords(itemTitle);
-  var cleanItemOriginal = removeDubWords(itemOriginal);
-  for (var t = 0; t < tmdbInfo.titles.length; t++) {
-    score = Math.max(score, similarityScore(cleanItemTitle, tmdbInfo.titles[t]));
-    score = Math.max(score, similarityScore(cleanItemOriginal, tmdbInfo.titles[t]));
-  }
-
-  if (tmdbInfo.year && itemYear) {
-    if (itemYear === tmdbInfo.year) score += 25;
-    else if (Math.abs(Number(itemYear) - Number(tmdbInfo.year)) <= 1) score += 10;
-  }
-
-  var dubbed = isDubbedTitle(itemTitle) || isDubbedTitle(item.ar_title) || isDubbedTitle(item.en_title);
-
-  return { score: score, isDubbed: dubbed, title: itemTitle, id: String(item.nb || item.id || "").trim(), item: item };
-}
-
-// ============================================================
-// Find matches — strict: only return dubbed if it truly matches
-// ============================================================
-function findMatches(tmdbInfo, mediaType) {
+// ─── Find Best Match for a specific type ─────────────────
+function findBestMatch(tmdbInfo, mediaType, requireDubbed) {
   return __async(this, null, function* () {
     var searchType = mediaType === "movie" ? "movie" : "series";
     var isSeries = mediaType !== "movie";
@@ -250,11 +238,22 @@ function findMatches(tmdbInfo, mediaType) {
       if (title && queries.indexOf(title) === -1) queries.push(title);
       var clean = title.replace(/[^\w\s]/g, " ").replace(/\s+/g, " ").trim();
       if (clean && clean !== title && queries.indexOf(clean) === -1) queries.push(clean);
-      var first = title.split(" ")[0];
-      if (first && first.length > 3 && queries.indexOf(first) === -1) queries.push(first);
     }
 
-    // Search with original queries
+    // If looking for dubbed, add explicit dub queries
+    if (requireDubbed) {
+      var dubQueries = [];
+      for (var q = 0; q < queries.length; q++) {
+        if (queries[q].indexOf("مدبلج") === -1 && queries[q].indexOf("dubbed") === -1) {
+          dubQueries.push(queries[q] + " مدبلج");
+          dubQueries.push(queries[q] + " dubbed");
+        }
+      }
+      queries = dubQueries;
+    }
+
+    console.log("[Cinemana] " + (requireDubbed ? "DUB" : "SUB") + " search queries: " + queries.join(" | "));
+
     for (var q = 0; q < queries.length; q++) {
       try {
         var results = yield searchCinemana(queries[q], searchType);
@@ -269,100 +268,71 @@ function findMatches(tmdbInfo, mediaType) {
       } catch (e) {}
     }
 
-    // Score all results
-    var scored = [];
+    console.log("[Cinemana] " + (requireDubbed ? "DUB" : "SUB") + " raw results: " + allResults.length);
+
+    var bestMatch = null;
+    var bestScore = 0;
+
     for (var i = 0; i < allResults.length; i++) {
-      var sc = scoreCandidate(allResults[i], tmdbInfo, isSeries);
-      if (sc.score >= 30) {
-        scored.push(sc);
-        console.log("[Cinemana] Candidate: " + sc.title + " | score=" + sc.score + " | dubbed=" + sc.isDubbed);
-      }
-    }
+      var item = allResults[i];
+      var itemTitle = item.en_title || item.ar_title || item.videoTitle || item.title || item.name || "";
+      var itemKind = String(item.kind || "");
+      var itemYear = "";
+      if (item.year) itemYear = String(item.year);
+      else if (item.createdate) itemYear = String(item.createdate).substring(0, 4);
 
-    if (scored.length === 0) {
-      console.log("[Cinemana] No matches from original search");
-      return { sub: null, dub: null };
-    }
+      var isItemSeries = itemKind === "2";
+      if (isSeries !== isItemSeries) continue;
 
-    scored.sort(function(a, b) { return b.score - a.score; });
+      // Check dubbed status
+      var isDubbed = isDubbedTitle(itemTitle) || isDubbedTitle(item.ar_title) || isDubbedTitle(item.en_title);
 
-    // Pick best sub (non-dubbed)
-    var bestSub = null;
-    for (var i = 0; i < scored.length; i++) {
-      if (!scored[i].isDubbed) { bestSub = scored[i]; break; }
-    }
+      if (requireDubbed && !isDubbed) continue;
+      if (!requireDubbed && isDubbed) continue;
 
-    // Pick best dub — MUST have high score AND match the title closely
-    var bestDub = null;
-    for (var i = 0; i < scored.length; i++) {
-      if (scored[i].isDubbed) {
-        // STRICT: dubbed must score 60+ AND year must match (if available)
-        if (scored[i].score >= 60) {
-          var itemYear = "";
-          if (scored[i].item.year) itemYear = String(scored[i].item.year);
-          else if (scored[i].item.createdate) itemYear = String(scored[i].item.createdate).substring(0, 4);
+      // Score against all TMDB titles
+      var score = 0;
+      for (var t = 0; t < tmdbInfo.titles.length; t++) {
+        var tmTitle = tmdbInfo.titles[t];
+        var s = strictMatchScore(itemTitle, tmTitle);
 
-          if (!tmdbInfo.year || !itemYear || itemYear === tmdbInfo.year) {
-            bestDub = scored[i];
-            break;
-          }
+        // For dubbed results, also score the title with dub words removed
+        if (isDubbed) {
+          var cleanItemTitle = removeDubWords(itemTitle);
+          var cleanScore = strictMatchScore(cleanItemTitle, tmTitle);
+          s = Math.max(s, cleanScore);
         }
+
+        score = Math.max(score, s);
+      }
+
+      // Year bonus
+      if (tmdbInfo.year && itemYear) {
+        if (itemYear === tmdbInfo.year) score += 5;
+      }
+
+      console.log("[Cinemana] " + (requireDubbed ? "DUB" : "SUB") + " candidate: '" + itemTitle + "' -> score=" + score);
+
+      if (score > bestScore) {
+        bestScore = score;
+        bestMatch = { item: item, score: score, id: String(item.nb || item.id || "").trim(), title: itemTitle, isDubbed: isDubbed };
       }
     }
 
-    // If no good dub found in original search, try explicit dubbed search
-    if (!bestDub) {
-      console.log("[Cinemana] No verified dub in original results. Trying explicit dub search...");
-      var dubQueries = [];
-      for (var q = 0; q < queries.length; q++) {
-        if (queries[q].indexOf("مدبلج") === -1 && queries[q].indexOf("dubbed") === -1) {
-          dubQueries.push(queries[q] + " مدبلج");
-          dubQueries.push(queries[q] + " dubbed");
-        }
-      }
+    // STRICT: require 90+ for sub, 85+ for dub (dub is harder to match)
+    var threshold = requireDubbed ? 85 : 90;
 
-      var dubResults = [];
-      for (var q = 0; q < dubQueries.length; q++) {
-        try {
-          var results = yield searchCinemana(dubQueries[q], searchType);
-          for (var r = 0; r < results.length; r++) {
-            var newId = String(results[r].nb || results[r].id || "").trim();
-            var existing = false;
-            for (var e = 0; e < dubResults.length; e++) {
-              if (String(dubResults[e].nb || dubResults[e].id || "").trim() === newId) { existing = true; break; }
-            }
-            if (!existing) dubResults.push(results[r]);
-          }
-        } catch (e) {}
-      }
-
-      // Score dub results with HIGHER threshold
-      var dubScored = [];
-      for (var i = 0; i < dubResults.length; i++) {
-        var sc = scoreCandidate(dubResults[i], tmdbInfo, isSeries);
-        // For explicit dub search, require 70+ score
-        if (sc.score >= 70 && sc.isDubbed) {
-          dubScored.push(sc);
-          console.log("[Cinemana] Dub candidate: " + sc.title + " | score=" + sc.score);
-        }
-      }
-
-      if (dubScored.length > 0) {
-        dubScored.sort(function(a, b) { return b.score - a.score; });
-        bestDub = dubScored[0];
-      }
+    if (bestMatch && bestScore >= threshold) {
+      console.log("[Cinemana] " + (requireDubbed ? "DUB" : "SUB") + " ACCEPTED: '" + bestMatch.title + "' (" + bestScore + ")");
+      return bestMatch;
     }
 
-    console.log("[Cinemana] Final: sub=" + (bestSub ? bestSub.title + "(" + bestSub.score + ")" : "none") + 
-                " | dub=" + (bestDub ? bestDub.title + "(" + bestDub.score + ")" : "none"));
-
-    return { sub: bestSub, dub: bestDub };
+    console.log("[Cinemana] " + (requireDubbed ? "DUB" : "SUB") + " REJECTED — best: " + bestScore + "/" + threshold);
+    return null;
   });
 }
 
-// ============================================================
-// Get streams from a match
-// ============================================================
+// ─── Get streams from a match ────────────────────────────
 function getStreamsFromMatch(match, mediaType, season, episode) {
   return __async(this, null, function* () {
     var streams = [];
@@ -419,9 +389,7 @@ function getStreamsFromMatch(match, mediaType, season, episode) {
   });
 }
 
-// ============================================================
-// Main
-// ============================================================
+// ─── Main ────────────────────────────────────────────────
 function getStreams(tmdbId, mediaType, season, episode) {
   return __async(this, null, function* () {
     var t0 = Date.now();
@@ -438,24 +406,35 @@ function getStreams(tmdbId, mediaType, season, episode) {
         console.log("[Cinemana] Failed to get TMDB info");
         return [];
       }
-      console.log("[Cinemana] TMDB titles: " + tmdbInfo.titles.join(" | "));
-      console.log("[Cinemana] TMDB year: " + tmdbInfo.year);
+      console.log("[Cinemana] TMDB: '" + tmdbInfo.titles[0] + "' year=" + tmdbInfo.year);
 
-      var matches = yield findMatches(tmdbInfo, mediaType);
       var allStreams = [];
 
-      if (matches.sub) {
-        var subStreams = yield getStreamsFromMatch(matches.sub, mediaType, season, episode);
+      // Find SUB (non-dubbed) — separate search, no dub keywords
+      var subMatch = yield findBestMatch(tmdbInfo, mediaType, false);
+      if (subMatch) {
+        var subStreams = yield getStreamsFromMatch(subMatch, mediaType, season, episode);
         for (var s = 0; s < subStreams.length; s++) allStreams.push(subStreams[s]);
       }
 
-      if (matches.dub) {
-        var dubStreams = yield getStreamsFromMatch(matches.dub, mediaType, season, episode);
-        for (var s = 0; s < dubStreams.length; s++) allStreams.push(dubStreams[s]);
-      }
+      // Find DUB (dubbed) — separate search WITH dub keywords
+      var dubMatch = yield findBestMatch(tmdbInfo, mediaType, true);
+      if (dubMatch) {
+        // Extra verification: the dub result's title (without dub words) must match TMDB
+        var cleanDubTitle = removeDubWords(dubMatch.title);
+        var verifyScore = 0;
+        for (var t = 0; t < tmdbInfo.titles.length; t++) {
+          verifyScore = Math.max(verifyScore, strictMatchScore(cleanDubTitle, tmdbInfo.titles[t]));
+        }
 
-      if (allStreams.length === 0) {
-        console.log("[Cinemana] No streams found");
+        console.log("[Cinemana] DUB verify: cleanTitle='" + cleanDubTitle + "' vs TMDB -> score=" + verifyScore);
+
+        if (verifyScore >= 80) {
+          var dubStreams = yield getStreamsFromMatch(dubMatch, mediaType, season, episode);
+          for (var s = 0; s < dubStreams.length; s++) allStreams.push(dubStreams[s]);
+        } else {
+          console.log("[Cinemana] DUB verification FAILED (need 80+, got " + verifyScore + "). Skipping dub.");
+        }
       }
 
       console.log("[Cinemana] === Done: " + allStreams.length + " streams in " + (Date.now() - t0) + "ms ===");
