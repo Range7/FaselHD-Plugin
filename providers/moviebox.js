@@ -1,5 +1,5 @@
 // MovieBox Scraper for Nuvio
-// Strict 1080p ONLY | Dual Audio (Arabic Dub + Original) | Ultra-strict matching
+// Strict 1080p ONLY | Dual Audio | Ultra-strict matching | Subtitle support
 // React Native / Hermes compatible — Promise chains only
 
 var __async = (__this, __arguments, generator) => {
@@ -44,77 +44,83 @@ function safeFetch(url, options, timeout) {
   });
 }
 
-// ─── STRICT Title Normalization ──────────────────────────
+// ─── Title Normalization ─────────────────────────────────
 function normalizeTitle(title) {
   if (!title) return "";
   return title.toLowerCase()
     .replace(/[:\-–—().,!?'"]/g, " ")
     .replace(/\s+/g, " ")
     .replace(/[^a-z0-9\s]/g, "")
-    .replace(/\b(season|s)\s*\d+\b/g, "")
-    .replace(/\b(part|vol|volume)\s*\d+\b/g, "")
+    .replace(/\b(season|s|part|vol|volume|episode|ep|chapter|ch)\s*\d+\b/g, "")
     .trim();
 }
 
 // ─── ULTRA-STRICT Matching ───────────────────────────────
-// Returns: { match: object|null, score: number, reason: string }
 function findStrictMatch(results, tmdbTitle, tmdbYear) {
   var normTmdb = normalizeTitle(tmdbTitle);
+  var tmdbWords = normTmdb.split(" ").filter(function(w) { return w.length > 2; });
   var bestMatch = null;
   var bestScore = 0;
   var reason = "";
 
-  results.forEach(function(r) {
+  console.log("[MovieBox] Matching against TMDB: '" + normTmdb + "' (words: " + tmdbWords.join(", ") + ")");
+
+  results.forEach(function(r, idx) {
     if (!r.title || !r.slug) return;
     var normResult = normalizeTitle(r.title);
+    var resultWords = normResult.split(" ").filter(function(w) { return w.length > 2; });
     var score = 0;
     var rReason = "";
 
-    // EXACT match (after normalization)
+    // EXACT match
     if (normTmdb === normResult) {
       score = 100;
       rReason = "exact";
     }
-    // One contains the other fully
+    // Contains: one must contain the other with high coverage
     else if (normTmdb.indexOf(normResult) !== -1 || normResult.indexOf(normTmdb) !== -1) {
-      // Calculate how much of the shorter one is contained
       var shorter = normTmdb.length < normResult.length ? normTmdb : normResult;
       var longer = normTmdb.length < normResult.length ? normResult : normTmdb;
       var coverage = shorter.length / longer.length;
-      score = Math.round(85 + (coverage * 10));
-      rReason = "contains";
+      if (coverage >= 0.85) {
+        score = Math.round(88 + (coverage * 10));
+        rReason = "contains";
+      }
     }
-    // Word-by-word matching (all major words must match)
+    // Word-level: require 90%+ of TMDB words to exist in result
     else {
-      var wordsTmdb = normTmdb.split(" ").filter(function(w) { return w.length > 2; });
-      var wordsResult = normResult.split(" ").filter(function(w) { return w.length > 2; });
       var matchedWords = 0;
-      wordsTmdb.forEach(function(wt) {
-        wordsResult.forEach(function(wr) {
+      tmdbWords.forEach(function(wt) {
+        resultWords.forEach(function(wr) {
           if (wt === wr || wt.indexOf(wr) !== -1 || wr.indexOf(wt) !== -1) {
             matchedWords++;
           }
         });
       });
-      var totalWords = Math.max(wordsTmdb.length, wordsResult.length);
-      if (totalWords > 0) {
-        var wordRatio = matchedWords / totalWords;
-        if (wordRatio >= 0.8) {
-          score = Math.round(70 + (wordRatio * 20));
-          rReason = "words";
-        }
+      var wordRatio = tmdbWords.length > 0 ? matchedWords / tmdbWords.length : 0;
+      if (wordRatio >= 0.9) {
+        score = Math.round(75 + (wordRatio * 15));
+        rReason = "words";
       }
     }
 
-    // Year bonus (only if year is present in both and matches)
+    // Year bonus (only if both have year and match)
     if (tmdbYear && r.year && r.year === tmdbYear) {
       score += 5;
     }
 
     // hasResource bonus
     if (r.hasResource) {
-      score += 3;
+      score += 2;
     }
+
+    // Length penalty: if result is way longer/shorter, reduce score
+    var lenRatio = Math.min(normTmdb.length, normResult.length) / Math.max(normTmdb.length, normResult.length);
+    if (lenRatio < 0.5) {
+      score = Math.round(score * 0.7);
+    }
+
+    console.log("  [" + (idx + 1) + "] '" + r.title + "' -> norm: '" + normResult + "' | score: " + score + " | reason: " + rReason);
 
     if (score > bestScore) {
       bestScore = score;
@@ -123,11 +129,13 @@ function findStrictMatch(results, tmdbTitle, tmdbYear) {
     }
   });
 
-  // ULTRA STRICT: reject anything below 85
-  if (bestScore < 85) {
+  // ULTRA STRICT: need 90+ to accept
+  if (bestScore < 90) {
+    console.log("[MovieBox] REJECTED — best score: " + bestScore + "/100 (need 90+).");
     return { match: null, score: bestScore, reason: "too_low" };
   }
 
+  console.log("[MovieBox] ACCEPTED: '" + bestMatch.title + "' (score: " + bestScore + ", reason: " + reason + ")");
   return { match: bestMatch, score: bestScore, reason: reason };
 }
 
@@ -216,7 +224,7 @@ function searchMovieBox(keyword, token) {
   });
 }
 
-// ─── Detail (with dubs info) ─────────────────────────────
+// ─── Detail (with dubs) ──────────────────────────────────
 function getMovieBoxDetail(detailPath, token) {
   var headers = {
     "User-Agent": UA,
@@ -249,7 +257,6 @@ function getMovieBoxDetail(detailPath, token) {
       }
     });
 
-    // Fallback: if no originalAudio found, use the first dub entry
     if (!originalAudio && dubs.length > 0) {
       originalAudio = dubs[0];
     }
@@ -315,26 +322,31 @@ function getMovieBoxStreams(subjectId, detailPath, season, episode, token) {
     if (!r.ok) {
       if (r.status === 403) {
         console.log("[MovieBox] Geo-blocked (403).");
-        return [];
+        return { streams: [], streamId: null, format: null };
       }
       throw new Error("Stream fetch failed: " + r.status);
     }
     return r.json();
   }).then(function(data) {
-    if (!data || !data.data) return [];
+    if (!data || !data.data) return { streams: [], streamId: null, format: null };
     var inner = data.data;
-    if (!inner.hasResource) return [];
+    if (!inner.hasResource) return { streams: [], streamId: null, format: null };
 
     var allStreams = [];
     var targetRes = 1080;
+    var firstStreamId = null;
+    var firstFormat = null;
 
     (inner.streams || []).forEach(function(s) {
+      if (!firstStreamId && s.id) { firstStreamId = s.id; firstFormat = s.format || "MP4"; }
       if (s.url && parseInt(s.resolutions || "0", 10) === targetRes) {
         allStreams.push({
           type: "MP4",
           title: s.resolutions + "p MP4",
           url: s.url,
           resolution: parseInt(s.resolutions, 10),
+          streamId: s.id || null,
+          format: s.format || "MP4",
           headers: {
             "User-Agent": UA,
             "Referer": "https://moviebox.ph/",
@@ -345,12 +357,15 @@ function getMovieBoxStreams(subjectId, detailPath, season, episode, token) {
     });
 
     (inner.hls || []).forEach(function(s) {
+      if (!firstStreamId && s.id) { firstStreamId = s.id; firstFormat = s.format || "HLS"; }
       if (s.url && parseInt(s.resolutions || "0", 10) === targetRes) {
         allStreams.push({
           type: "HLS",
           title: s.resolutions + "p HLS",
           url: s.url,
           resolution: parseInt(s.resolutions, 10),
+          streamId: s.id || null,
+          format: s.format || "HLS",
           headers: {
             "User-Agent": UA,
             "Referer": "https://moviebox.ph/",
@@ -361,12 +376,15 @@ function getMovieBoxStreams(subjectId, detailPath, season, episode, token) {
     });
 
     (inner.dash || []).forEach(function(s) {
+      if (!firstStreamId && s.id) { firstStreamId = s.id; firstFormat = s.format || "DASH"; }
       if (s.url && parseInt(s.resolutions || "0", 10) === targetRes) {
         allStreams.push({
           type: "DASH",
           title: s.resolutions + "p DASH",
           url: s.url,
           resolution: parseInt(s.resolutions, 10),
+          streamId: s.id || null,
+          format: s.format || "DASH",
           headers: {
             "User-Agent": UA,
             "Referer": "https://moviebox.ph/",
@@ -378,7 +396,7 @@ function getMovieBoxStreams(subjectId, detailPath, season, episode, token) {
 
     if (allStreams.length === 0) {
       console.log("[MovieBox] No exact 1080p streams.");
-      return [];
+      return { streams: [], streamId: firstStreamId, format: firstFormat };
     }
 
     allStreams.sort(function(a, b) {
@@ -386,15 +404,71 @@ function getMovieBoxStreams(subjectId, detailPath, season, episode, token) {
       return (typeOrder[a.type] || 4) - (typeOrder[b.type] || 4);
     });
 
-    return allStreams.map(function(s) {
+    return {
+      streams: allStreams.map(function(s) {
+        return {
+          name: "MovieBox",
+          title: s.title,
+          url: s.url,
+          quality: s.resolution + "p",
+          headers: s.headers,
+          streamId: s.streamId,
+          format: s.format
+        };
+      }),
+      streamId: firstStreamId,
+      format: firstFormat
+    };
+  });
+}
+
+// ─── Subtitles ───────────────────────────────────────────
+function getMovieBoxSubtitles(subjectId, detailPath, season, episode, streamId, streamFormat, token) {
+  if (!streamId || !streamFormat) {
+    console.log("[MovieBox] No streamId for subtitles.");
+    return Promise.resolve([]);
+  }
+
+  var se = season || 1;
+  var ep = episode || 1;
+
+  var capUrl = API_BASE + "/subject/caption?format=" + streamFormat + "&id=" + streamId +
+    "&subjectId=" + subjectId + "&detailPath=" + detailPath;
+
+  var headers = {
+    "User-Agent": UA,
+    "Accept": "application/json",
+    "X-Client-Info": '{"timezone":"UTC"}',
+    "X-Request-Lang": "en",
+    "Referer": "https://moviebox.ph/",
+    "Origin": "https://moviebox.ph"
+  };
+  if (token) headers["Authorization"] = "Bearer " + token;
+
+  return safeFetch(capUrl, { headers: headers }).then(function(r) {
+    if (!r.ok) {
+      console.log("[MovieBox] Subtitle fetch failed: " + r.status);
+      return [];
+    }
+    return r.json();
+  }).then(function(data) {
+    var inner = data.data || {};
+    var captions = inner.captions || inner || [];
+    if (!Array.isArray(captions)) captions = [];
+
+    var subs = captions.map(function(c) {
       return {
-        name: "MovieBox",
-        title: s.title,
-        url: s.url,
-        quality: s.resolution + "p",
-        headers: s.headers
+        url: c.url || c.file || "",
+        lang: c.lanCode || c.language || "unknown",
+        label: c.lanName || c.label || (c.lanCode || "unknown")
       };
-    });
+    }).filter(function(s) { return s.url; });
+
+    console.log("[MovieBox] Found " + subs.length + " subtitle tracks.");
+    return subs;
+  }).catch(function(e) {
+    console.log("[MovieBox] Subtitle error: " + e.message);
+    return [];
   });
 }
 
@@ -409,7 +483,7 @@ function getStreams(tmdbId, mediaType, season, episode) {
       var token = yield getBearerToken();
       var meta = yield getTmdbMeta(tmdbId, mediaType);
       var searchTitle = meta.searchTitle || meta.title;
-      console.log("[MovieBox] TMDB: " + meta.title + " (" + meta.year + ")");
+      console.log("[MovieBox] TMDB: '" + meta.title + "' (year: " + meta.year + ")");
 
       var results = yield searchMovieBox(searchTitle, token);
       if (!results || results.length === 0) {
@@ -417,44 +491,45 @@ function getStreams(tmdbId, mediaType, season, episode) {
         return [];
       }
 
-      // ULTRA-STRICT matching
+      // ULTRA-STRICT matching with debug logging
       var matchResult = findStrictMatch(results, searchTitle, meta.year);
       if (!matchResult.match) {
-        console.log("[MovieBox] REJECTED — best score: " + matchResult.score + "/100 (need 85+). Reason: " + matchResult.reason);
+        console.log("[MovieBox] No match accepted. Returning empty.");
         return [];
       }
 
       var match = matchResult.match;
-      console.log("[MovieBox] ACCEPTED: " + match.title + " (score: " + matchResult.score + "/100, reason: " + matchResult.reason + ")");
-
-      // Get detail for dubs
       var detail = yield getMovieBoxDetail(match.slug, token);
       var finalStreams = [];
 
-      // Option 1: Arabic Dub (if exists)
+      // Option 1: Arabic Dub
       if (detail.hasArabicDub && detail.arabicDubSubjectId && detail.arabicDubPath) {
-        console.log("[MovieBox] Fetching Arabic Dub version...");
-        var arStreams = yield getMovieBoxStreams(detail.arabicDubSubjectId, detail.arabicDubPath, season, episode, token);
-        arStreams.forEach(function(s) {
+        console.log("[MovieBox] Fetching Arabic Dub...");
+        var arResult = yield getMovieBoxStreams(detail.arabicDubSubjectId, detail.arabicDubPath, season, episode, token);
+        var arSubs = yield getMovieBoxSubtitles(detail.arabicDubSubjectId, detail.arabicDubPath, season, episode, arResult.streamId, arResult.format, token);
+        arResult.streams.forEach(function(s) {
           s.name = "MovieBox | مدبلج عربي";
+          if (arSubs.length > 0) s.subtitles = arSubs;
           finalStreams.push(s);
         });
       }
 
-      // Option 2: Original Audio (always try, fallback to main match)
+      // Option 2: Original Audio
       var origSubjectId = detail.originalSubjectId || match.subjectId;
       var origPath = detail.originalPath || match.slug;
       if (origSubjectId && origPath) {
-        console.log("[MovieBox] Fetching Original Audio version...");
-        var origStreams = yield getMovieBoxStreams(origSubjectId, origPath, season, episode, token);
+        console.log("[MovieBox] Fetching Original Audio...");
+        var origResult = yield getMovieBoxStreams(origSubjectId, origPath, season, episode, token);
         var origLabel = detail.hasArabicSub ? "الصوت الأصلي + ترجمة عربية" : "الصوت الأصلي";
-        origStreams.forEach(function(s) {
+        var origSubs = yield getMovieBoxSubtitles(origSubjectId, origPath, season, episode, origResult.streamId, origResult.format, token);
+        origResult.streams.forEach(function(s) {
           s.name = "MovieBox | " + origLabel;
+          if (origSubs.length > 0) s.subtitles = origSubs;
           finalStreams.push(s);
         });
       }
 
-      console.log("[MovieBox] === Done: " + finalStreams.length + " stream options in " + (Date.now() - t0) + "ms ===");
+      console.log("[MovieBox] === Done: " + finalStreams.length + " options in " + (Date.now() - t0) + "ms ===");
       return finalStreams;
 
     } catch (error) {
