@@ -1,5 +1,5 @@
 // Cinemana Scraper for Nuvio Local Scrapers
-// ULTRA-STRICT matching | 1080p only | Dubbed & Subtitled verified
+// Multi-language EXACT literal search | 1080p only | Verified Dub/Sub
 // React Native compatible version (Hermes-safe, no async/await)
 
 var __async = (__this, __arguments, generator) => {
@@ -47,7 +47,7 @@ function normalizeTitle(title) {
   return title.toLowerCase()
     .replace(/[\:\-\–—().,!?'"]/g, " ")
     .replace(/\s+/g, " ")
-    .replace(/[^a-z0-9\s\u0600-\u06FF]/g, "")  // keep Arabic
+    .replace(/[^a-z0-9\s\u0600-\u06FF]/g, "")
     .replace(/\b(season|s|part|vol|volume|episode|ep|chapter|ch)\s*\d+\b/g, "")
     .replace(/\bالحلقة\s*\d+\b/g, "")
     .replace(/\bالموسم\s*\d+\b/g, "")
@@ -121,10 +121,12 @@ function strictMatchScore(resultTitle, tmdbTitle) {
   return Math.round(wordRatio * 70);
 }
 
-// ─── TMDB ────────────────────────────────────────────────
+// ─── TMDB: Get ALL language titles ───────────────────────
 function getTMDBInfo(tmdbId, mediaType) {
   return __async(this, null, function* () {
     var type = mediaType === "movie" ? "movie" : "tv";
+
+    // 1. Get English info + original language
     var urlEn = TMDB_BASE + "/" + type + "/" + tmdbId + "?api_key=" + TMDB_API_KEY + "&language=en-US";
     try {
       var r = yield safeFetch(urlEn);
@@ -141,6 +143,43 @@ function getTMDBInfo(tmdbId, mediaType) {
       if (titleEn) titles.push(titleEn);
       if (origTitle && origTitle !== titleEn) titles.push(origTitle);
 
+      // 2. Get ALL translations from TMDB (one call = all languages!)
+      try {
+        var urlTrans = TMDB_BASE + "/" + type + "/" + tmdbId + "/translations?api_key=" + TMDB_API_KEY;
+        var rTrans = yield safeFetch(urlTrans, null, 10e3);
+        if (rTrans.ok) {
+          var dTrans = yield rTrans.json();
+          var transList = dTrans.translations || [];
+          for (var i = 0; i < transList.length; i++) {
+            var trans = transList[i];
+            if (trans && trans.data) {
+              var tTitle = trans.data.title || trans.data.name || "";
+              if (tTitle && titles.indexOf(tTitle) === -1) {
+                titles.push(tTitle);
+                console.log("[Cinemana] TMDB translation [" + trans.iso_639_1 + "]: " + tTitle);
+              }
+            }
+          }
+        }
+      } catch (e) {
+        console.log("[Cinemana] Translations error: " + e.message);
+      }
+
+      // 3. Get alternative titles as backup
+      try {
+        var urlAlt = TMDB_BASE + "/" + type + "/" + tmdbId + "/alternative_titles?api_key=" + TMDB_API_KEY;
+        var rAlt = yield safeFetch(urlAlt, null, 8e3);
+        if (rAlt.ok) {
+          var dAlt = yield rAlt.json();
+          var list = dAlt.results || dAlt.titles || [];
+          for (var i = 0; i < list.length; i++) {
+            var a = list[i].title || list[i].name || "";
+            if (a && titles.indexOf(a) === -1) titles.push(a);
+          }
+        }
+      } catch (e) {}
+
+      // 4. Also get title in original language explicitly (in case translations missed it)
       if (origLang !== "en") {
         try {
           var r2 = yield safeFetch(TMDB_BASE + "/" + type + "/" + tmdbId + "?api_key=" + TMDB_API_KEY + "&language=" + origLang, null, 8e3);
@@ -148,16 +187,13 @@ function getTMDBInfo(tmdbId, mediaType) {
         } catch (e) {}
       }
 
+      // 5. Get Arabic title explicitly
       try {
         var rAr = yield safeFetch(TMDB_BASE + "/" + type + "/" + tmdbId + "?api_key=" + TMDB_API_KEY + "&language=ar", null, 8e3);
         if (rAr.ok) { var dAr = yield rAr.json(); var tAr = dAr.title || dAr.name || ""; if (tAr && titles.indexOf(tAr) === -1) titles.push(tAr); }
       } catch (e) {}
 
-      try {
-        var rAlt = yield safeFetch(TMDB_BASE + "/" + type + "/" + tmdbId + "/alternative_titles?api_key=" + TMDB_API_KEY, null, 8e3);
-        if (rAlt.ok) { var dAlt = yield rAlt.json(); var list = dAlt.results || dAlt.titles || []; for (var i = 0; i < list.length; i++) { var a = list[i].title || list[i].name || ""; if (a && titles.indexOf(a) === -1) titles.push(a); } }
-      } catch (e) {}
-
+      console.log("[Cinemana] All TMDB titles: " + titles.join(" | "));
       return { titles: titles, originalLanguage: origLang, year: year, tmdbData: d };
     } catch (e) {
       console.log("[Cinemana] TMDB error: " + e.message);
@@ -232,12 +268,19 @@ function findBestMatch(tmdbInfo, mediaType, requireDubbed) {
     var allResults = [];
     var queries = [];
 
-    // Build queries
+    // Build queries from ALL TMDB titles (multi-language!)
     for (var t = 0; t < tmdbInfo.titles.length; t++) {
       var title = tmdbInfo.titles[t];
-      if (title && queries.indexOf(title) === -1) queries.push(title);
-      var clean = title.replace(/[^\w\s]/g, " ").replace(/\s+/g, " ").trim();
+      if (!title) continue;
+      if (queries.indexOf(title) === -1) queries.push(title);
+
+      // Clean version (no special chars)
+      var clean = title.replace(/[^\w\s\u0600-\u06FF]/g, " ").replace(/\s+/g, " ").trim();
       if (clean && clean !== title && queries.indexOf(clean) === -1) queries.push(clean);
+
+      // First word only (for long titles)
+      var first = title.split(" ")[0];
+      if (first && first.length > 3 && queries.indexOf(first) === -1) queries.push(first);
     }
 
     // If looking for dubbed, add explicit dub queries
@@ -252,7 +295,7 @@ function findBestMatch(tmdbInfo, mediaType, requireDubbed) {
       queries = dubQueries;
     }
 
-    console.log("[Cinemana] " + (requireDubbed ? "DUB" : "SUB") + " search queries: " + queries.join(" | "));
+    console.log("[Cinemana] " + (requireDubbed ? "DUB" : "SUB") + " search queries (" + queries.length + " langs): " + queries.slice(0, 6).join(" | ") + (queries.length > 6 ? " ..." : ""));
 
     for (var q = 0; q < queries.length; q++) {
       try {
@@ -290,7 +333,7 @@ function findBestMatch(tmdbInfo, mediaType, requireDubbed) {
       if (requireDubbed && !isDubbed) continue;
       if (!requireDubbed && isDubbed) continue;
 
-      // Score against all TMDB titles
+      // Score against ALL TMDB titles (multi-language!)
       var score = 0;
       for (var t = 0; t < tmdbInfo.titles.length; t++) {
         var tmTitle = tmdbInfo.titles[t];
@@ -319,7 +362,7 @@ function findBestMatch(tmdbInfo, mediaType, requireDubbed) {
       }
     }
 
-    // STRICT: require 90+ for sub, 85+ for dub (dub is harder to match)
+    // STRICT: require 90+ for sub, 85+ for dub
     var threshold = requireDubbed ? 85 : 90;
 
     if (bestMatch && bestScore >= threshold) {
@@ -406,7 +449,7 @@ function getStreams(tmdbId, mediaType, season, episode) {
         console.log("[Cinemana] Failed to get TMDB info");
         return [];
       }
-      console.log("[Cinemana] TMDB: '" + tmdbInfo.titles[0] + "' year=" + tmdbInfo.year);
+      console.log("[Cinemana] TMDB: '" + tmdbInfo.titles[0] + "' year=" + tmdbInfo.year + " lang=" + tmdbInfo.originalLanguage);
 
       var allStreams = [];
 
@@ -420,7 +463,6 @@ function getStreams(tmdbId, mediaType, season, episode) {
       // Find DUB (dubbed) — separate search WITH dub keywords
       var dubMatch = yield findBestMatch(tmdbInfo, mediaType, true);
       if (dubMatch) {
-        // Extra verification: the dub result's title (without dub words) must match TMDB
         var cleanDubTitle = removeDubWords(dubMatch.title);
         var verifyScore = 0;
         for (var t = 0; t < tmdbInfo.titles.length; t++) {
