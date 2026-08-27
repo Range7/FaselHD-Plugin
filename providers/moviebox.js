@@ -1,5 +1,6 @@
 // MovieBox Scraper for Nuvio
-// Strict 1080p ONLY | Arabic Dub Detection | React Native / Hermes compatible
+// Strict 1080p ONLY | Dual Audio (Arabic Dub + Original) | Ultra-strict matching
+// React Native / Hermes compatible — Promise chains only
 
 var __async = (__this, __arguments, generator) => {
   return new Promise((resolve, reject) => {
@@ -43,32 +44,94 @@ function safeFetch(url, options, timeout) {
   });
 }
 
+// ─── STRICT Title Normalization ──────────────────────────
 function normalizeTitle(title) {
   if (!title) return "";
   return title.toLowerCase()
-    .replace(/[:\-–—]/g, " ")
+    .replace(/[:\-–—().,!?'"]/g, " ")
     .replace(/\s+/g, " ")
     .replace(/[^a-z0-9\s]/g, "")
+    .replace(/\b(season|s)\s*\d+\b/g, "")
+    .replace(/\b(part|vol|volume)\s*\d+\b/g, "")
     .trim();
 }
 
-function similarityScore(a, b) {
-  var na = normalizeTitle(a);
-  var nb = normalizeTitle(b);
-  if (na === nb) return 100;
-  if (na.indexOf(nb) !== -1 || nb.indexOf(na) !== -1) return 90;
-  var wordsA = na.split(" ").filter(function(w) { return w.length > 2; });
-  var wordsB = nb.split(" ").filter(function(w) { return w.length > 2; });
-  var matches = 0;
-  wordsA.forEach(function(wa) {
-    wordsB.forEach(function(wb) {
-      if (wa === wb || (wa.indexOf(wb) !== -1 || wb.indexOf(wa) !== -1)) matches++;
-    });
+// ─── ULTRA-STRICT Matching ───────────────────────────────
+// Returns: { match: object|null, score: number, reason: string }
+function findStrictMatch(results, tmdbTitle, tmdbYear) {
+  var normTmdb = normalizeTitle(tmdbTitle);
+  var bestMatch = null;
+  var bestScore = 0;
+  var reason = "";
+
+  results.forEach(function(r) {
+    if (!r.title || !r.slug) return;
+    var normResult = normalizeTitle(r.title);
+    var score = 0;
+    var rReason = "";
+
+    // EXACT match (after normalization)
+    if (normTmdb === normResult) {
+      score = 100;
+      rReason = "exact";
+    }
+    // One contains the other fully
+    else if (normTmdb.indexOf(normResult) !== -1 || normResult.indexOf(normTmdb) !== -1) {
+      // Calculate how much of the shorter one is contained
+      var shorter = normTmdb.length < normResult.length ? normTmdb : normResult;
+      var longer = normTmdb.length < normResult.length ? normResult : normTmdb;
+      var coverage = shorter.length / longer.length;
+      score = Math.round(85 + (coverage * 10));
+      rReason = "contains";
+    }
+    // Word-by-word matching (all major words must match)
+    else {
+      var wordsTmdb = normTmdb.split(" ").filter(function(w) { return w.length > 2; });
+      var wordsResult = normResult.split(" ").filter(function(w) { return w.length > 2; });
+      var matchedWords = 0;
+      wordsTmdb.forEach(function(wt) {
+        wordsResult.forEach(function(wr) {
+          if (wt === wr || wt.indexOf(wr) !== -1 || wr.indexOf(wt) !== -1) {
+            matchedWords++;
+          }
+        });
+      });
+      var totalWords = Math.max(wordsTmdb.length, wordsResult.length);
+      if (totalWords > 0) {
+        var wordRatio = matchedWords / totalWords;
+        if (wordRatio >= 0.8) {
+          score = Math.round(70 + (wordRatio * 20));
+          rReason = "words";
+        }
+      }
+    }
+
+    // Year bonus (only if year is present in both and matches)
+    if (tmdbYear && r.year && r.year === tmdbYear) {
+      score += 5;
+    }
+
+    // hasResource bonus
+    if (r.hasResource) {
+      score += 3;
+    }
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestMatch = r;
+      reason = rReason;
+    }
   });
-  var total = Math.max(wordsA.length, wordsB.length);
-  return total > 0 ? Math.round((matches / total) * 80) : 0;
+
+  // ULTRA STRICT: reject anything below 85
+  if (bestScore < 85) {
+    return { match: null, score: bestScore, reason: "too_low" };
+  }
+
+  return { match: bestMatch, score: bestScore, reason: reason };
 }
 
+// ─── TMDB Metadata ───────────────────────────────────────
 function getTmdbMeta(tmdbId, mediaType) {
   var tmdbPath = mediaType === "movie" ? "movie" : "tv";
   var tmdbUrl = "https://api.themoviedb.org/3/" + tmdbPath + "/" + tmdbId + "?api_key=" + TMDB_API_KEY;
@@ -83,20 +146,17 @@ function getTmdbMeta(tmdbId, mediaType) {
     var originalTitle = data.original_title || data.original_name || "";
     var originalLang = data.original_language || "";
     var year = (data.release_date || data.first_air_date || "").substring(0, 4);
-    var searchTitle = title;
-    if (originalLang === "tr" && originalTitle && originalTitle !== title) {
-      searchTitle = title;
-    }
     return {
       title: title,
       originalTitle: originalTitle,
-      searchTitle: searchTitle,
+      searchTitle: title,
       originalLang: originalLang,
       year: year
     };
   });
 }
 
+// ─── Bearer Token ────────────────────────────────────────
 function getBearerToken() {
   return safeFetch(API_BASE + "/home?host=moviebox.ph", {
     headers: {
@@ -121,6 +181,7 @@ function getBearerToken() {
   });
 }
 
+// ─── Search ──────────────────────────────────────────────
 function searchMovieBox(keyword, token) {
   var headers = {
     "User-Agent": UA,
@@ -155,6 +216,7 @@ function searchMovieBox(keyword, token) {
   });
 }
 
+// ─── Detail (with dubs info) ─────────────────────────────
 function getMovieBoxDetail(detailPath, token) {
   var headers = {
     "User-Agent": UA,
@@ -175,24 +237,36 @@ function getMovieBoxDetail(detailPath, token) {
     var dubs = subject.dubs || [];
     var arDub = null;
     var arSub = null;
+    var originalAudio = null;
 
     dubs.forEach(function(d) {
       if (d.lanCode === "ar") {
         if (d.type === 0 && !arDub) arDub = d;
         if (d.type === 1 && !arSub) arSub = d;
       }
+      if (d.original === true && !originalAudio) {
+        originalAudio = d;
+      }
     });
+
+    // Fallback: if no originalAudio found, use the first dub entry
+    if (!originalAudio && dubs.length > 0) {
+      originalAudio = dubs[0];
+    }
 
     return {
       hasArabicDub: !!arDub,
       hasArabicSub: !!arSub,
       arabicDubSubjectId: arDub ? String(arDub.subjectId) : "",
       arabicDubPath: arDub ? arDub.detailPath : "",
+      originalSubjectId: originalAudio ? String(originalAudio.subjectId) : "",
+      originalPath: originalAudio ? originalAudio.detailPath : "",
       dubs: dubs
     };
   });
 }
 
+// ─── Player Domain ───────────────────────────────────────
 function getPlayerDomain(token) {
   var headers = {
     "User-Agent": UA,
@@ -215,6 +289,7 @@ function getPlayerDomain(token) {
   });
 }
 
+// ─── Streams (strict 1080p) ──────────────────────────────
 function getMovieBoxStreams(subjectId, detailPath, season, episode, token) {
   return getPlayerDomain(token).then(function(domain) {
     var se = season || 1;
@@ -302,7 +377,7 @@ function getMovieBoxStreams(subjectId, detailPath, season, episode, token) {
     });
 
     if (allStreams.length === 0) {
-      console.log("[MovieBox] No exact 1080p streams found. Returning empty.");
+      console.log("[MovieBox] No exact 1080p streams.");
       return [];
     }
 
@@ -323,6 +398,7 @@ function getMovieBoxStreams(subjectId, detailPath, season, episode, token) {
   });
 }
 
+// ─── Main Entry ──────────────────────────────────────────
 function getStreams(tmdbId, mediaType, season, episode) {
   return __async(this, null, function* () {
     var t0 = Date.now();
@@ -333,7 +409,7 @@ function getStreams(tmdbId, mediaType, season, episode) {
       var token = yield getBearerToken();
       var meta = yield getTmdbMeta(tmdbId, mediaType);
       var searchTitle = meta.searchTitle || meta.title;
-      console.log("[MovieBox] TMDB: " + meta.title + " | search: " + searchTitle);
+      console.log("[MovieBox] TMDB: " + meta.title + " (" + meta.year + ")");
 
       var results = yield searchMovieBox(searchTitle, token);
       if (!results || results.length === 0) {
@@ -341,55 +417,45 @@ function getStreams(tmdbId, mediaType, season, episode) {
         return [];
       }
 
-      var match = null;
-      var bestScore = 0;
-      var MIN_SCORE = 75;
-
-      results.forEach(function(r) {
-        var score = similarityScore(searchTitle, r.title);
-        if (meta.year && r.year && r.year === meta.year) score += 10;
-        if (r.hasResource) score += 5;
-        if (score > bestScore) {
-          bestScore = score;
-          match = r;
-        }
-      });
-
-      if (!match || bestScore < MIN_SCORE) {
-        console.log("[MovieBox] No confident match. Best score: " + bestScore + "/100.");
+      // ULTRA-STRICT matching
+      var matchResult = findStrictMatch(results, searchTitle, meta.year);
+      if (!matchResult.match) {
+        console.log("[MovieBox] REJECTED — best score: " + matchResult.score + "/100 (need 85+). Reason: " + matchResult.reason);
         return [];
       }
 
-      console.log("[MovieBox] Matched: " + match.title + " (score: " + bestScore + ")");
+      var match = matchResult.match;
+      console.log("[MovieBox] ACCEPTED: " + match.title + " (score: " + matchResult.score + "/100, reason: " + matchResult.reason + ")");
 
-      // Check Arabic dub
+      // Get detail for dubs
       var detail = yield getMovieBoxDetail(match.slug, token);
-      var useSubjectId = match.subjectId;
-      var useDetailPath = match.slug;
-      var arDubLabel = "";
+      var finalStreams = [];
 
-      if (detail.hasArabicDub) {
-        console.log("[MovieBox] Arabic DUB detected — using dubbed version.");
-        useSubjectId = detail.arabicDubSubjectId;
-        useDetailPath = detail.arabicDubPath;
-        arDubLabel = " [مدبلج عربي]";
-      } else if (detail.hasArabicSub) {
-        console.log("[MovieBox] Arabic SUB available — using original with subs.");
-        arDubLabel = " [ترجمة عربية]";
-      } else {
-        console.log("[MovieBox] No Arabic dub/sub available.");
-        arDubLabel = " [بدون دبلجة]";
+      // Option 1: Arabic Dub (if exists)
+      if (detail.hasArabicDub && detail.arabicDubSubjectId && detail.arabicDubPath) {
+        console.log("[MovieBox] Fetching Arabic Dub version...");
+        var arStreams = yield getMovieBoxStreams(detail.arabicDubSubjectId, detail.arabicDubPath, season, episode, token);
+        arStreams.forEach(function(s) {
+          s.name = "MovieBox | مدبلج عربي";
+          finalStreams.push(s);
+        });
       }
 
-      var streams = yield getMovieBoxStreams(useSubjectId, useDetailPath, season, episode, token);
+      // Option 2: Original Audio (always try, fallback to main match)
+      var origSubjectId = detail.originalSubjectId || match.subjectId;
+      var origPath = detail.originalPath || match.slug;
+      if (origSubjectId && origPath) {
+        console.log("[MovieBox] Fetching Original Audio version...");
+        var origStreams = yield getMovieBoxStreams(origSubjectId, origPath, season, episode, token);
+        var origLabel = detail.hasArabicSub ? "الصوت الأصلي + ترجمة عربية" : "الصوت الأصلي";
+        origStreams.forEach(function(s) {
+          s.name = "MovieBox | " + origLabel;
+          finalStreams.push(s);
+        });
+      }
 
-      // Append Arabic status to provider name so it's visible in server list
-      streams.forEach(function(s) {
-        s.name = "MovieBox" + arDubLabel;
-      });
-
-      console.log("[MovieBox] === Done: " + streams.length + " streams in " + (Date.now() - t0) + "ms ===");
-      return streams;
+      console.log("[MovieBox] === Done: " + finalStreams.length + " stream options in " + (Date.now() - t0) + "ms ===");
+      return finalStreams;
 
     } catch (error) {
       console.log("[MovieBox] Error: " + error.message);
