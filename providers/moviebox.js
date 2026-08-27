@@ -1,5 +1,5 @@
 // MovieBox Scraper for Nuvio
-// Strict 1080p ONLY | Dual Audio | Ultra-strict matching | Subtitle support
+// Strict 1080p ONLY | Dual Audio (VERIFIED) | Subtitles | Ultra-strict matching
 // React Native / Hermes compatible — Promise chains only
 
 var __async = (__this, __arguments, generator) => {
@@ -63,7 +63,7 @@ function findStrictMatch(results, tmdbTitle, tmdbYear) {
   var bestScore = 0;
   var reason = "";
 
-  console.log("[MovieBox] Matching against TMDB: '" + normTmdb + "' (words: " + tmdbWords.join(", ") + ")");
+  console.log("[MovieBox] Matching TMDB: '" + normTmdb + "' (words: " + tmdbWords.join(", ") + ")");
 
   results.forEach(function(r, idx) {
     if (!r.title || !r.slug) return;
@@ -72,12 +72,10 @@ function findStrictMatch(results, tmdbTitle, tmdbYear) {
     var score = 0;
     var rReason = "";
 
-    // EXACT match
     if (normTmdb === normResult) {
       score = 100;
       rReason = "exact";
     }
-    // Contains: one must contain the other with high coverage
     else if (normTmdb.indexOf(normResult) !== -1 || normResult.indexOf(normTmdb) !== -1) {
       var shorter = normTmdb.length < normResult.length ? normTmdb : normResult;
       var longer = normTmdb.length < normResult.length ? normResult : normTmdb;
@@ -87,7 +85,6 @@ function findStrictMatch(results, tmdbTitle, tmdbYear) {
         rReason = "contains";
       }
     }
-    // Word-level: require 90%+ of TMDB words to exist in result
     else {
       var matchedWords = 0;
       tmdbWords.forEach(function(wt) {
@@ -104,23 +101,13 @@ function findStrictMatch(results, tmdbTitle, tmdbYear) {
       }
     }
 
-    // Year bonus (only if both have year and match)
-    if (tmdbYear && r.year && r.year === tmdbYear) {
-      score += 5;
-    }
+    if (tmdbYear && r.year && r.year === tmdbYear) score += 5;
+    if (r.hasResource) score += 2;
 
-    // hasResource bonus
-    if (r.hasResource) {
-      score += 2;
-    }
-
-    // Length penalty: if result is way longer/shorter, reduce score
     var lenRatio = Math.min(normTmdb.length, normResult.length) / Math.max(normTmdb.length, normResult.length);
-    if (lenRatio < 0.5) {
-      score = Math.round(score * 0.7);
-    }
+    if (lenRatio < 0.5) score = Math.round(score * 0.7);
 
-    console.log("  [" + (idx + 1) + "] '" + r.title + "' -> norm: '" + normResult + "' | score: " + score + " | reason: " + rReason);
+    console.log("  [" + (idx + 1) + "] '" + r.title + "' -> '" + normResult + "' | score: " + score + " | " + rReason);
 
     if (score > bestScore) {
       bestScore = score;
@@ -129,13 +116,12 @@ function findStrictMatch(results, tmdbTitle, tmdbYear) {
     }
   });
 
-  // ULTRA STRICT: need 90+ to accept
   if (bestScore < 90) {
-    console.log("[MovieBox] REJECTED — best score: " + bestScore + "/100 (need 90+).");
+    console.log("[MovieBox] REJECTED — best: " + bestScore + "/100 (need 90+)");
     return { match: null, score: bestScore, reason: "too_low" };
   }
 
-  console.log("[MovieBox] ACCEPTED: '" + bestMatch.title + "' (score: " + bestScore + ", reason: " + reason + ")");
+  console.log("[MovieBox] ACCEPTED: '" + bestMatch.title + "' (" + bestScore + ", " + reason + ")");
   return { match: bestMatch, score: bestScore, reason: reason };
 }
 
@@ -224,7 +210,7 @@ function searchMovieBox(keyword, token) {
   });
 }
 
-// ─── Detail (with dubs) ──────────────────────────────────
+// ─── Detail ──────────────────────────────────────────────
 function getMovieBoxDetail(detailPath, token) {
   var headers = {
     "User-Agent": UA,
@@ -270,6 +256,55 @@ function getMovieBoxDetail(detailPath, token) {
       originalPath: originalAudio ? originalAudio.detailPath : "",
       dubs: dubs
     };
+  });
+}
+
+// ─── Verify Dub Title ────────────────────────────────────
+// CRITICAL: Verify that the Arabic dub's detailPath actually points to the same show
+function verifyDubTitle(detailPath, expectedTitle, token) {
+  return getMovieBoxDetail(detailPath, token).then(function(detail) {
+    var subject = (detail.dubs && detail.dubs[0]) ? detail.dubs[0] : {};
+    // The detail response doesn't have a direct title, so we check if the first dub's detailPath matches
+    // Actually, we need to get the title from the detail response
+    // Since the detail API returns data.subject, we can use that
+    // But we already called getMovieBoxDetail which returns dubs array
+    // We need to re-fetch to get the actual title
+    return safeFetch(API_BASE + "/detail?detailPath=" + detailPath, {
+      headers: {
+        "User-Agent": UA,
+        "Authorization": token ? "Bearer " + token : "",
+        "X-Client-Info": '{"timezone":"UTC"}',
+        "X-Request-Lang": "en",
+        "Referer": "https://moviebox.ph/",
+        "Origin": "https://moviebox.ph"
+      }
+    }).then(function(r) {
+      if (!r.ok) return { valid: false, title: "" };
+      return r.json();
+    }).then(function(data) {
+      var subject = (data.data || {}).subject || {};
+      var dubTitle = subject.title || "";
+      var normExpected = normalizeTitle(expectedTitle);
+      var normDub = normalizeTitle(dubTitle);
+      var score = 0;
+
+      if (normExpected === normDub) score = 100;
+      else if (normExpected.indexOf(normDub) !== -1 || normDub.indexOf(normExpected) !== -1) score = 90;
+      else {
+        var wordsE = normExpected.split(" ").filter(function(w) { return w.length > 2; });
+        var wordsD = normDub.split(" ").filter(function(w) { return w.length > 2; });
+        var matched = 0;
+        wordsE.forEach(function(we) {
+          wordsD.forEach(function(wd) {
+            if (we === wd || we.indexOf(wd) !== -1 || wd.indexOf(we) !== -1) matched++;
+          });
+        });
+        score = wordsE.length > 0 ? Math.round((matched / wordsE.length) * 80) : 0;
+      }
+
+      console.log("[MovieBox] Dub verify: expected='" + expectedTitle + "' vs dub='" + dubTitle + "' -> score: " + score);
+      return { valid: score >= 70, title: dubTitle, score: score };
+    });
   });
 }
 
@@ -491,10 +526,9 @@ function getStreams(tmdbId, mediaType, season, episode) {
         return [];
       }
 
-      // ULTRA-STRICT matching with debug logging
       var matchResult = findStrictMatch(results, searchTitle, meta.year);
       if (!matchResult.match) {
-        console.log("[MovieBox] No match accepted. Returning empty.");
+        console.log("[MovieBox] No match accepted.");
         return [];
       }
 
@@ -502,19 +536,26 @@ function getStreams(tmdbId, mediaType, season, episode) {
       var detail = yield getMovieBoxDetail(match.slug, token);
       var finalStreams = [];
 
-      // Option 1: Arabic Dub
+      // ── Option 1: Arabic Dub (WITH VERIFICATION) ──
       if (detail.hasArabicDub && detail.arabicDubSubjectId && detail.arabicDubPath) {
-        console.log("[MovieBox] Fetching Arabic Dub...");
-        var arResult = yield getMovieBoxStreams(detail.arabicDubSubjectId, detail.arabicDubPath, season, episode, token);
-        var arSubs = yield getMovieBoxSubtitles(detail.arabicDubSubjectId, detail.arabicDubPath, season, episode, arResult.streamId, arResult.format, token);
-        arResult.streams.forEach(function(s) {
-          s.name = "MovieBox | مدبلج عربي";
-          if (arSubs.length > 0) s.subtitles = arSubs;
-          finalStreams.push(s);
-        });
+        console.log("[MovieBox] Verifying Arabic Dub...");
+        var verify = yield verifyDubTitle(detail.arabicDubPath, match.title, token);
+
+        if (verify.valid) {
+          console.log("[MovieBox] Arabic Dub VERIFIED: '" + verify.title + "' (score: " + verify.score + ")");
+          var arResult = yield getMovieBoxStreams(detail.arabicDubSubjectId, detail.arabicDubPath, season, episode, token);
+          var arSubs = yield getMovieBoxSubtitles(detail.arabicDubSubjectId, detail.arabicDubPath, season, episode, arResult.streamId, arResult.format, token);
+          arResult.streams.forEach(function(s) {
+            s.name = "MovieBox | مدبلج عربي";
+            if (arSubs.length > 0) s.subtitles = arSubs;
+            finalStreams.push(s);
+          });
+        } else {
+          console.log("[MovieBox] Arabic Dub REJECTED: title mismatch (score: " + verify.score + "). Using original only.");
+        }
       }
 
-      // Option 2: Original Audio
+      // ── Option 2: Original Audio ──
       var origSubjectId = detail.originalSubjectId || match.subjectId;
       var origPath = detail.originalPath || match.slug;
       if (origSubjectId && origPath) {
