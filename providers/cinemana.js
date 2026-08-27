@@ -1,6 +1,5 @@
 // Cinemana Scraper for Nuvio
 // Shabakaty Cinemana - STRICT 1080p ONLY | Exact Title Matching | All Languages
-// ENHANCED: Rich Metadata Display + Beautiful Icons + Extra Info
 // React Native / Hermes compatible
 
 var __async = (__this, __arguments, generator) => {
@@ -57,72 +56,6 @@ function normalizeTitle(title) {
     .trim();
 }
 
-// ─── Format Bytes ────────────────────────────────────────
-function formatSize(bytes) {
-  if (!bytes || bytes <= 0) return "غير معروف";
-  var sizes = ["B", "KB", "MB", "GB", "TB"];
-  var i = Math.floor(Math.log(bytes) / Math.log(1024));
-  return (bytes / Math.pow(1024, i)).toFixed(2) + " " + sizes[i];
-}
-
-// ─── Build Rich Title with Beautiful Icons ───────────────
-function buildCinemanaRichTitle(stream, meta, match, videoDetails) {
-  var lines = [];
-
-  // Line 1: Server + Quality + Source
-  lines.push("🎬 Cinemana | 1080p | 📡 المصدر: Shabakaty");
-
-  // Line 2: Title
-  var title = meta.title || match.title || match.enTitle || match.arTitle || "محتوى بدون عنوان";
-  var year = meta.year || match.year || "";
-  lines.push("🍿 " + title + (year ? " (" + year + ")" : ""));
-
-  // Line 3: Technical specs
-  var source = stream.source || "WEB-DL";
-  var codec = stream.codec || "H.264";
-  var audioCodec = stream.audioCodec || "AAC";
-  lines.push("🎞️ 1080p • " + source + " • " + audioCodec + " • " + codec);
-
-  // Line 4: Source detail
-  lines.push("🛰️ المصدر: Cinemana (Shabakaty) | العراق");
-
-  // Line 5: Size
-  var size = stream.size || stream.fileSize || 0;
-  lines.push("💾 الحجم: " + (size ? formatSize(size) : "غير محدد"));
-
-  // Line 6: Audio languages
-  var audioLangs = videoDetails && videoDetails.audioLanguages ? videoDetails.audioLanguages : ["متعدد اللغات"];
-  lines.push("🎧 الصوت: " + audioLangs.join("، "));
-
-  // Line 7: Subtitles
-  var subLangs = videoDetails && videoDetails.subLanguages ? videoDetails.subLanguages : ["عربية", "إنجليزية"];
-  lines.push("📝 الترجمة: " + subLangs.join("، "));
-
-  // Line 8: Extra info
-  var extras = [];
-  extras.push("⚡ النوع: MP4");
-  extras.push("🌐 اللغة: " + (meta.originalLang || "متعدد"));
-  extras.push("📺 جودة: Full HD");
-  if (match.stars) extras.push("⭐ التقييم: " + match.stars);
-  lines.push(extras.join(" | "));
-
-  // Line 9: More details
-  var moreDetails = [];
-  if (videoDetails && videoDetails.duration) moreDetails.push("⏱️ المدة: " + videoDetails.duration);
-  if (videoDetails && videoDetails.episodeNum) moreDetails.push("📺 الحلقة: " + videoDetails.episodeNum);
-  if (videoDetails && videoDetails.seasonNum) moreDetails.push("📂 الموسم: " + videoDetails.seasonNum);
-  if (moreDetails.length > 0) {
-    lines.push("🔎 " + moreDetails.join(" | "));
-  }
-
-  // Line 10: TMDB rating if available
-  if (meta.rating && meta.rating > 0) {
-    lines.push("⭐ تقييم TMDB: " + meta.rating + "/10");
-  }
-
-  return lines.join("\n");
-}
-
 // ─── TMDB Metadata with Language ─────────────────────────
 function getTmdbMeta(tmdbId, mediaType) {
   var tmdbPath = mediaType === "movie" ? "movie" : "tv";
@@ -143,9 +76,7 @@ function getTmdbMeta(tmdbId, mediaType) {
       originalTitle: originalTitle,
       searchTitle: title || originalTitle,
       year: year,
-      originalLang: originalLang,
-      rating: data.vote_average || 0,
-      overview: data.overview || ""
+      originalLang: originalLang
     };
   });
 }
@@ -157,9 +88,13 @@ function getSearchQueries(meta) {
   var original = meta.originalTitle || "";
   var lang = meta.originalLang || "";
 
+  // Always search with primary title (English usually)
   if (primary) queries.push(primary);
+
+  // If original title is different, add it
   if (original && original !== primary) queries.push(original);
 
+  // Language-specific additional searches
   var langMap = {
     "tr": ["turkish", "turkce"],
     "ja": ["japanese", "jp"],
@@ -226,9 +161,11 @@ function searchCinemanaAll(queries, year, mediaType) {
         }
       });
 
+      // If we found strong candidates, stop searching
       if (allResults.length >= 5) break;
     }
 
+    // If no results with year, try without year
     if (allResults.length === 0) {
       console.log("[Cinemana] No results with year, trying without year...");
       for (var j = 0; j < queries.length; j++) {
@@ -255,8 +192,10 @@ function scoreExactMatch(tmdbTitle, resultTitle) {
 
   if (!normResult || !normTmdb) return 0;
 
+  // EXACT match
   if (normTmdb === normResult) return 100;
 
+  // One contains the other (high coverage)
   if (normTmdb.indexOf(normResult) !== -1 || normResult.indexOf(normTmdb) !== -1) {
     var shorter = normTmdb.length < normResult.length ? normTmdb : normResult;
     var longer = normTmdb.length < normResult.length ? normResult : normTmdb;
@@ -265,6 +204,7 @@ function scoreExactMatch(tmdbTitle, resultTitle) {
     return Math.round(60 + coverage * 20);
   }
 
+  // Word-by-word matching
   var tmdbWords = normTmdb.split(" ").filter(function(w) { return w.length > 2; });
   var resultWords = normResult.split(" ").filter(function(w) { return w.length > 2; });
 
@@ -312,9 +252,12 @@ function findExactMatch(results, meta, mediaType) {
       });
     });
 
+    // Year bonus (only if year matches)
     if (meta.year && r.year && r.year === meta.year) bestItemScore += 8;
+
+    // Kind bonus (must match type)
     if (r.kind === expectedKind) bestItemScore += 5;
-    else bestItemScore -= 10;
+    else bestItemScore -= 10; // Penalty for wrong type
 
     console.log("  [" + (idx + 1) + "] '" + r.title + "' (kind:" + r.kind + ", year:" + r.year + ") -> score: " + bestItemScore + " | matched: '" + bestMatchedTitle + "'");
 
@@ -324,6 +267,7 @@ function findExactMatch(results, meta, mediaType) {
     }
   });
 
+  // STRICT threshold: 80+ required for exact match
   if (bestScore < 80) {
     console.log("[Cinemana] REJECTED — best score: " + bestScore + " (need 80+ for exact match)");
     return null;
@@ -376,49 +320,6 @@ function getEpisodes(seriesId, season, episode) {
   });
 }
 
-// ─── Get Video Details for Rich Info ─────────────────────
-function getVideoDetails(videoId) {
-  var detailsUrl = API_BASE + "/allVideoInfo/id/" + videoId;
-  return safeFetch(detailsUrl).then(function(r) {
-    if (!r.ok) return {};
-    return r.json();
-  }).then(function(data) {
-    var details = {
-      duration: data.duration || "",
-      episodeNum: data.episodeNummer || data.episodeNumber || "",
-      seasonNum: data.season || "",
-      audioLanguages: [],
-      subLanguages: []
-    };
-
-    var translations = data.translations || [];
-    var seenAudio = {};
-    var seenSubs = {};
-
-    translations.forEach(function(t) {
-      var lang = t.name || t.language || "";
-      if (lang && !seenSubs[lang]) {
-        seenSubs[lang] = true;
-        details.subLanguages.push(lang);
-      }
-    });
-
-    if (details.subLanguages.length === 0) {
-      details.subLanguages = ["عربية", "إنجليزية"];
-    }
-    if (details.audioLanguages.length === 0) {
-      details.audioLanguages = ["متعدد اللغات"];
-    }
-
-    return details;
-  }).catch(function() {
-    return {
-      audioLanguages: ["متعدد اللغات"],
-      subLanguages: ["عربية", "إنجليزية"]
-    };
-  });
-}
-
 // ─── Get Stream Links — STRICT 1080p ONLY ────────────────
 function getStreamLinks(videoId) {
   var streamsUrl = API_BASE + "/transcoddedFiles/id/" + videoId;
@@ -437,6 +338,7 @@ function getStreamLinks(videoId) {
 
       if (!videoUrl) return;
 
+      // STRICT: 1080p ONLY
       var resNum = 0;
       var resMatch = resolution.match(/(\d+)/);
       if (resMatch) resNum = parseInt(resMatch[1], 10);
@@ -444,6 +346,7 @@ function getStreamLinks(videoId) {
       var is1080 = (resNum === 1080 || resolution.indexOf("1080") !== -1);
       if (!is1080) return;
 
+      // Deduplicate by URL
       if (seenUrls[videoUrl]) return;
       seenUrls[videoUrl] = true;
 
@@ -451,11 +354,7 @@ function getStreamLinks(videoId) {
         url: videoUrl,
         resolution: resolution,
         quality: 1080,
-        name: "Cinemana | 1080p",
-        source: item.source || "WEB-DL",
-        codec: item.codec || "H.264",
-        audioCodec: item.audioCodec || "AAC",
-        size: item.size || item.fileSize || 0
+        name: "Cinemana | 1080p"
       });
     });
 
@@ -507,10 +406,14 @@ function getStreams(tmdbId, mediaType, season, episode) {
     console.log("[Cinemana] === " + type + "/" + tmdbId + " S" + (season || 1) + "E" + (episode || 1) + " ===");
 
     try {
+      // 1. Get TMDB metadata with language
       var meta = yield getTmdbMeta(tmdbId, mediaType);
       console.log("[Cinemana] TMDB: '" + meta.title + "' | Original: '" + meta.originalTitle + "' | Lang: " + meta.originalLang + " | Year: " + meta.year);
 
+      // 2. Determine search queries based on language
       var queries = getSearchQueries(meta);
+
+      // 3. Search Cinemana with all queries
       var searchResults = yield searchCinemanaAll(queries, meta.year, mediaType);
 
       if (!searchResults || searchResults.length === 0) {
@@ -518,6 +421,7 @@ function getStreams(tmdbId, mediaType, season, episode) {
         return [];
       }
 
+      // 4. Find EXACT match (strict: 80+ score)
       var match = findExactMatch(searchResults, meta, mediaType);
       if (!match) {
         console.log("[Cinemana] No exact match found. Content may not exist on Cinemana.");
@@ -527,6 +431,7 @@ function getStreams(tmdbId, mediaType, season, episode) {
       var videoId = match.id;
       console.log("[Cinemana] Exact match ID: " + videoId + " | Title: " + match.title);
 
+      // 5. For series/anime, find specific episode
       if (mediaType === "tv" || mediaType === "anime") {
         var epId = yield getEpisodes(videoId, season || 1, episode || 1);
         if (epId) {
@@ -537,21 +442,21 @@ function getStreams(tmdbId, mediaType, season, episode) {
         }
       }
 
+      // 6. Get stream links — STRICT 1080p ONLY
       var streams = yield getStreamLinks(videoId);
       if (!streams || streams.length === 0) {
         console.log("[Cinemana] No 1080p streams available for this content.");
         return [];
       }
 
+      // 7. Get subtitles
       var subtitles = yield getSubtitles(videoId);
-      var videoDetails = yield getVideoDetails(videoId);
 
+      // 8. Build final response
       var finalStreams = streams.map(function(s) {
-        var richTitle = buildCinemanaRichTitle(s, meta, match, videoDetails);
-
         var streamObj = {
-          name: "Cinemana 🎬",
-          title: richTitle,
+          name: "Cinemana",
+          title: s.name,
           url: s.url,
           quality: "1080p",
           headers: {

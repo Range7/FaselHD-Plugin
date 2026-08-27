@@ -1,6 +1,5 @@
 // MovieBox Scraper for Nuvio
 // Strict 1080p ONLY | Dual Audio (VERIFIED) | Subtitles | Ultra-strict matching
-// ENHANCED: Rich Metadata Display + Beautiful Icons + Extra Info
 // React Native / Hermes compatible — Promise chains only
 
 var __async = (__this, __arguments, generator) => {
@@ -54,84 +53,6 @@ function normalizeTitle(title) {
     .replace(/[^a-z0-9\s]/g, "")
     .replace(/\b(season|s|part|vol|volume|episode|ep|chapter|ch)\s*\d+\b/g, "")
     .trim();
-}
-
-// ─── Format Bytes ────────────────────────────────────────
-function formatSize(bytes) {
-  if (!bytes || bytes <= 0) return "غير معروف";
-  var sizes = ["B", "KB", "MB", "GB", "TB"];
-  var i = Math.floor(Math.log(bytes) / Math.log(1024));
-  return (bytes / Math.pow(1024, i)).toFixed(2) + " " + sizes[i];
-}
-
-// ─── Build Rich Title with Beautiful Icons ───────────────
-function buildMovieBoxRichTitle(stream, meta, match, detail, isArabicDub) {
-  var lines = [];
-
-  // Line 1: Server + Quality + Source
-  var dubLabel = isArabicDub ? "مدبلج عربي 🎙️" : "الصوت الأصلي 🌍";
-  lines.push("📦 MovieBox | 1080p | " + dubLabel + " | 📡 المصدر: MovieBox");
-
-  // Line 2: Title
-  var title = meta.title || match.title || "محتوى بدون عنوان";
-  var year = meta.year || match.year || "";
-  lines.push("🍿 " + title + (year ? " (" + year + ")" : ""));
-
-  // Line 3: Technical specs
-  var source = stream.source || "WEB-DL";
-  var codec = stream.codec || "H.264";
-  var audioCodec = stream.audioCodec || "AAC";
-  var formatType = stream.format || "MP4";
-  lines.push("🎞️ 1080p • " + source + " • " + audioCodec + " • " + codec + " • " + formatType);
-
-  // Line 4: Source detail
-  lines.push("🛰️ المصدر: MovieBox | عالمي");
-
-  // Line 5: Size
-  var size = stream.size || stream.fileSize || 0;
-  lines.push("💾 الحجم: " + (size ? formatSize(size) : "غير محدد"));
-
-  // Line 6: Audio info
-  if (isArabicDub) {
-    lines.push("🎧 الصوت: مدبلج عربي | لغة الصوت: العربية");
-  } else {
-    var origLang = meta.originalLang || "الأصلية";
-    var subLabel = detail.hasArabicSub ? " + ترجمة عربية" : "";
-    lines.push("🎧 الصوت: " + origLang + subLabel);
-  }
-
-  // Line 7: Subtitles
-  if (isArabicDub) {
-    lines.push("📝 الترجمة: غير متاحة (مدبلج)");
-  } else {
-    lines.push("📝 الترجمة: " + (detail.hasArabicSub ? "عربية + متعدد اللغات" : "متعدد اللغات"));
-  }
-
-  // Line 8: Extra info
-  var extras = [];
-  extras.push("⚡ النوع: " + (stream.format || "MP4"));
-  extras.push("🌐 اللغة الأصلية: " + (meta.originalLang || "إنجليزية"));
-  extras.push("📺 جودة: Full HD");
-  if (meta.rating && meta.rating > 0) extras.push("⭐ التقييم: " + meta.rating + "/10");
-  lines.push(extras.join(" | "));
-
-  // Line 9: More details
-  var moreDetails = [];
-  if (stream.streamId) moreDetails.push("🔑 معرف: " + stream.streamId);
-  if (meta.overview) moreDetails.push("📖 " + meta.overview.substring(0, 80) + (meta.overview.length > 80 ? "..." : ""));
-  if (moreDetails.length > 0) {
-    lines.push("🔎 " + moreDetails.join(" | "));
-  }
-
-  // Line 10: Dub/Sub availability
-  var availDetails = [];
-  if (detail.hasArabicDub) availDetails.push("✅ دبلجة عربية متاحة");
-  if (detail.hasArabicSub) availDetails.push("✅ ترجمة عربية متاحة");
-  if (availDetails.length > 0) {
-    lines.push("📋 " + availDetails.join(" | "));
-  }
-
-  return lines.join("\n");
 }
 
 // ─── ULTRA-STRICT Matching ───────────────────────────────
@@ -224,9 +145,7 @@ function getTmdbMeta(tmdbId, mediaType) {
       originalTitle: originalTitle,
       searchTitle: title,
       originalLang: originalLang,
-      year: year,
-      rating: data.vote_average || 0,
-      overview: data.overview || ""
+      year: year
     };
   });
 }
@@ -341,8 +260,15 @@ function getMovieBoxDetail(detailPath, token) {
 }
 
 // ─── Verify Dub Title ────────────────────────────────────
+// CRITICAL: Verify that the Arabic dub's detailPath actually points to the same show
 function verifyDubTitle(detailPath, expectedTitle, token) {
   return getMovieBoxDetail(detailPath, token).then(function(detail) {
+    var subject = (detail.dubs && detail.dubs[0]) ? detail.dubs[0] : {};
+    // The detail response doesn't have a direct title, so we check if the first dub's detailPath matches
+    // Actually, we need to get the title from the detail response
+    // Since the detail API returns data.subject, we can use that
+    // But we already called getMovieBoxDetail which returns dubs array
+    // We need to re-fetch to get the actual title
     return safeFetch(API_BASE + "/detail?detailPath=" + detailPath, {
       headers: {
         "User-Agent": UA,
@@ -456,10 +382,6 @@ function getMovieBoxStreams(subjectId, detailPath, season, episode, token) {
           resolution: parseInt(s.resolutions, 10),
           streamId: s.id || null,
           format: s.format || "MP4",
-          size: s.size || s.fileSize || 0,
-          source: s.source || "WEB-DL",
-          codec: s.codec || "H.264",
-          audioCodec: s.audioCodec || "AAC",
           headers: {
             "User-Agent": UA,
             "Referer": "https://moviebox.ph/",
@@ -479,10 +401,6 @@ function getMovieBoxStreams(subjectId, detailPath, season, episode, token) {
           resolution: parseInt(s.resolutions, 10),
           streamId: s.id || null,
           format: s.format || "HLS",
-          size: s.size || s.fileSize || 0,
-          source: s.source || "WEB-DL",
-          codec: s.codec || "H.264",
-          audioCodec: s.audioCodec || "AAC",
           headers: {
             "User-Agent": UA,
             "Referer": "https://moviebox.ph/",
@@ -502,10 +420,6 @@ function getMovieBoxStreams(subjectId, detailPath, season, episode, token) {
           resolution: parseInt(s.resolutions, 10),
           streamId: s.id || null,
           format: s.format || "DASH",
-          size: s.size || s.fileSize || 0,
-          source: s.source || "WEB-DL",
-          codec: s.codec || "H.264",
-          audioCodec: s.audioCodec || "AAC",
           headers: {
             "User-Agent": UA,
             "Referer": "https://moviebox.ph/",
@@ -526,7 +440,17 @@ function getMovieBoxStreams(subjectId, detailPath, season, episode, token) {
     });
 
     return {
-      streams: allStreams,
+      streams: allStreams.map(function(s) {
+        return {
+          name: "MovieBox",
+          title: s.title,
+          url: s.url,
+          quality: s.resolution + "p",
+          headers: s.headers,
+          streamId: s.streamId,
+          format: s.format
+        };
+      }),
       streamId: firstStreamId,
       format: firstFormat
     };
@@ -621,20 +545,10 @@ function getStreams(tmdbId, mediaType, season, episode) {
           console.log("[MovieBox] Arabic Dub VERIFIED: '" + verify.title + "' (score: " + verify.score + ")");
           var arResult = yield getMovieBoxStreams(detail.arabicDubSubjectId, detail.arabicDubPath, season, episode, token);
           var arSubs = yield getMovieBoxSubtitles(detail.arabicDubSubjectId, detail.arabicDubPath, season, episode, arResult.streamId, arResult.format, token);
-
           arResult.streams.forEach(function(s) {
-            var richTitle = buildMovieBoxRichTitle(s, meta, match, detail, true);
-            var streamObj = {
-              name: "MovieBox 📦 | مدبلج عربي 🎙️",
-              title: richTitle,
-              url: s.url,
-              quality: "1080p",
-              headers: s.headers,
-              streamId: s.streamId,
-              format: s.format
-            };
-            if (arSubs.length > 0) streamObj.subtitles = arSubs;
-            finalStreams.push(streamObj);
+            s.name = "MovieBox | مدبلج عربي";
+            if (arSubs.length > 0) s.subtitles = arSubs;
+            finalStreams.push(s);
           });
         } else {
           console.log("[MovieBox] Arabic Dub REJECTED: title mismatch (score: " + verify.score + "). Using original only.");
@@ -647,22 +561,12 @@ function getStreams(tmdbId, mediaType, season, episode) {
       if (origSubjectId && origPath) {
         console.log("[MovieBox] Fetching Original Audio...");
         var origResult = yield getMovieBoxStreams(origSubjectId, origPath, season, episode, token);
-        var origLabel = detail.hasArabicSub ? "الصوت الأصلي + ترجمة عربية 🌍" : "الصوت الأصلي 🌍";
+        var origLabel = detail.hasArabicSub ? "الصوت الأصلي + ترجمة عربية" : "الصوت الأصلي";
         var origSubs = yield getMovieBoxSubtitles(origSubjectId, origPath, season, episode, origResult.streamId, origResult.format, token);
-
         origResult.streams.forEach(function(s) {
-          var richTitle = buildMovieBoxRichTitle(s, meta, match, detail, false);
-          var streamObj = {
-            name: "MovieBox 📦 | " + origLabel,
-            title: richTitle,
-            url: s.url,
-            quality: "1080p",
-            headers: s.headers,
-            streamId: s.streamId,
-            format: s.format
-          };
-          if (origSubs.length > 0) streamObj.subtitles = origSubs;
-          finalStreams.push(streamObj);
+          s.name = "MovieBox | " + origLabel;
+          if (origSubs.length > 0) s.subtitles = origSubs;
+          finalStreams.push(s);
         });
       }
 
