@@ -16,17 +16,17 @@
       "contentLanguage": ["en", "ar", "ja"]
     },
     {
-      "id": "nuvio-showbox",
-      "name": "ShowBox",
-      "description": "ShowBox streaming with multiple quality options and versions (~5s)",
-      "version": "2.0",
-      "author": "Nuvio Team",
-      "supportedTypes": ["movie", "tv", "anime"],
-      "filename": "providers/showbox.js",
+      "id": "nuvio-cinemana",
+      "name": "Cinemana",
+      "description": "Shabakaty Cinemana - Arabic movies and TV series with direct MP4 streaming",
+      "version": "1.0",
+      "author": "He",
+      "supportedTypes": ["movie", "tv"],
+      "filename": "providers/cinemana.js",
       "enabled": true,
-      "formats": ["mp4", "mkv"],
-      "logo": "https://files.catbox.moe/4mdxz9.jpeg",
-      "contentLanguage": ["en"]
+      "formats": ["mp4"],
+      "logo": "https://cinemana.shabakaty.cc/assets/images/logo.png",
+      "contentLanguage": ["ar", "en"]
     },
     {
       "id": "nuvio-moviebox",
