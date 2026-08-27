@@ -29,19 +29,6 @@
       "contentLanguage": ["ar", "en", "ja", "ko", "es", "fr", "de", "tr", "hi", "zh"]
     },
     {
-      "id": "nuvio-cee",
-      "name": "Cee",
-      "description": "Cee - STRICT 1080p ONLY with exact title matching",
-      "version": "3.0",
-      "author": "He",
-      "supportedTypes": ["movie", "tv", "anime"],
-      "filename": "providers/cee.js",
-      "enabled": true,
-      "formats": ["mp4"],
-      "logo": "https://cee.buzz/assets/images/logo.png",
-      "contentLanguage": ["ar", "en", "ja", "ko", "es", "fr", "de", "tr", "hi", "zh"]
-    },
-    {
       "id": "nuvio-moviebox",
       "name": "MovieBox",
       "description": "MovieBox HD streaming — Movies, TV Shows & Anime with multi-quality MP4/HLS/DASH streams (~8s)",
