@@ -1,5 +1,6 @@
 // Cinemana Scraper for Nuvio Local Scrapers
 // Multi-language EXACT literal search | 1080p only | Verified Dub/Sub
+// Fixed: Japanese/Chinese/Korean title support
 // React Native compatible version (Hermes-safe, no async/await)
 
 var __async = (__this, __arguments, generator) => {
@@ -42,12 +43,12 @@ function safeFetch(url, options, timeout) {
 }
 
 // ─── Title Normalization ─────────────────────────────────
+// FIXED: Preserves ALL language characters (Japanese, Chinese, Korean, etc.)
 function normalizeTitle(title) {
   if (!title) return "";
   return title.toLowerCase()
     .replace(/[\:\-\–—().,!?'"]/g, " ")
     .replace(/\s+/g, " ")
-    .replace(/[^a-z0-9\s\u0600-\u06FF]/g, "")
     .replace(/\b(season|s|part|vol|volume|episode|ep|chapter|ch)\s*\d+\b/g, "")
     .replace(/\bالحلقة\s*\d+\b/g, "")
     .replace(/\bالموسم\s*\d+\b/g, "")
@@ -100,7 +101,7 @@ function strictMatchScore(resultTitle, tmdbTitle) {
     }
   }
 
-  // Word overlap
+  // Word overlap (for space-separated languages like English/Arabic)
   var resultWords = normResult.split(" ").filter(function(w) { return w.length > 2; });
   var tmdbWords = normTmdb.split(" ").filter(function(w) { return w.length > 2; });
 
@@ -179,7 +180,7 @@ function getTMDBInfo(tmdbId, mediaType) {
         }
       } catch (e) {}
 
-      // 4. Also get title in original language explicitly (in case translations missed it)
+      // 4. Also get title in original language explicitly (for anime: Japanese, Korean, Chinese, etc.)
       if (origLang !== "en") {
         try {
           var r2 = yield safeFetch(TMDB_BASE + "/" + type + "/" + tmdbId + "?api_key=" + TMDB_API_KEY + "&language=" + origLang, null, 8e3);
@@ -192,6 +193,25 @@ function getTMDBInfo(tmdbId, mediaType) {
         var rAr = yield safeFetch(TMDB_BASE + "/" + type + "/" + tmdbId + "?api_key=" + TMDB_API_KEY + "&language=ar", null, 8e3);
         if (rAr.ok) { var dAr = yield rAr.json(); var tAr = dAr.title || dAr.name || ""; if (tAr && titles.indexOf(tAr) === -1) titles.push(tAr); }
       } catch (e) {}
+
+      // 6. For anime (Japanese), also try to get romaji from alternative titles
+      if (origLang === "ja") {
+        try {
+          var rAlt2 = yield safeFetch(TMDB_BASE + "/" + type + "/" + tmdbId + "/alternative_titles?api_key=" + TMDB_API_KEY, null, 8e3);
+          if (rAlt2.ok) {
+            var dAlt2 = yield rAlt2.json();
+            var list2 = dAlt2.results || dAlt2.titles || [];
+            for (var i = 0; i < list2.length; i++) {
+              var a2 = list2[i].title || list2[i].name || "";
+              // If it looks like romaji (has Latin chars and is Japanese-related)
+              if (a2 && /[a-zA-Z]/.test(a2) && titles.indexOf(a2) === -1) {
+                titles.push(a2);
+                console.log("[Cinemana] Anime romaji alt: " + a2);
+              }
+            }
+          }
+        } catch (e) {}
+      }
 
       console.log("[Cinemana] All TMDB titles: " + titles.join(" | "));
       return { titles: titles, originalLanguage: origLang, year: year, tmdbData: d };
@@ -274,8 +294,8 @@ function findBestMatch(tmdbInfo, mediaType, requireDubbed) {
       if (!title) continue;
       if (queries.indexOf(title) === -1) queries.push(title);
 
-      // Clean version (no special chars)
-      var clean = title.replace(/[^\w\s\u0600-\u06FF]/g, " ").replace(/\s+/g, " ").trim();
+      // Clean version (no special chars, but KEEP all language chars!)
+      var clean = title.replace(/[\:\-\–—().,!?'"]/g, " ").replace(/\s+/g, " ").trim();
       if (clean && clean !== title && queries.indexOf(clean) === -1) queries.push(clean);
 
       // First word only (for long titles)
