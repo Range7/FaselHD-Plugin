@@ -1,9 +1,4 @@
-
-# Build all three files
-
-# ─── 1. MOVIEBOX.JS (strict 1080p + Arabic dub) ─────────────────────────
-
-moviebox_js = r'''// MovieBox Scraper for Nuvio
+// MovieBox Scraper for Nuvio
 // Strict 1080p ONLY | Arabic Dub Detection | React Native / Hermes compatible
 
 var __async = (__this, __arguments, generator) => {
@@ -404,6 +399,3 @@ function getStreams(tmdbId, mediaType, season, episode) {
 }
 
 module.exports = { getStreams };
-'''
-
-print("moviebox.js built: " + str(len(moviebox_js)) + " bytes")
