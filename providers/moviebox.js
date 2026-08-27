@@ -383,9 +383,9 @@ function getStreams(tmdbId, mediaType, season, episode) {
 
       var streams = yield getMovieBoxStreams(useSubjectId, useDetailPath, season, episode, token);
 
-      // Append Arabic status to stream titles
+      // Append Arabic status to provider name so it's visible in server list
       streams.forEach(function(s) {
-        s.title = s.title + arDubLabel;
+        s.name = "MovieBox" + arDubLabel;
       });
 
       console.log("[MovieBox] === Done: " + streams.length + " streams in " + (Date.now() - t0) + "ms ===");
