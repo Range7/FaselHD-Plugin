@@ -1,6 +1,6 @@
 {
-  "name": "FaselHD",
-  "version": "1.3",
+  "name": "FaselHD + MovieBox",
+  "version": "1.4",
   "scrapers": [
     {
       "id": "nuvio-faselhd",
@@ -14,7 +14,7 @@
       "formats": ["m3u8"],
       "logo": "https://raw.githubusercontent.com/nvmindl/nuvio-providers/main/Assets/faselhdx.png",
       "contentLanguage": ["en", "ar", "ja"]
-         },
+    },
     {
       "id": "nuvio-showbox",
       "name": "ShowBox",
@@ -25,6 +25,19 @@
       "filename": "providers/showbox.js",
       "enabled": true,
       "formats": ["mp4", "mkv"],
+      "logo": "https://files.catbox.moe/4mdxz9.jpeg",
+      "contentLanguage": ["en"]
+    },
+    {
+      "id": "nuvio-moviebox",
+      "name": "MovieBox",
+      "description": "MovieBox HD streaming — Movies, TV Shows & Anime with multi-quality MP4/HLS/DASH streams (~8s)",
+      "version": "1.0",
+      "author": "Nuvio Team",
+      "supportedTypes": ["movie", "tv", "anime"],
+      "filename": "providers/moviebox.js",
+      "enabled": true,
+      "formats": ["mp4", "m3u8", "dash"],
       "logo": "https://files.catbox.moe/4mdxz9.jpeg",
       "contentLanguage": ["en"]
     }
