@@ -1,23 +1,15 @@
 // Cinemana Scraper for Nuvio Local Scrapers
-// Multi-language exact search + 1080p only + Dubbed & Subtitled
+// Multi-language exact search + 1080p only + Dubbed & Subtitled (strict verification)
 // React Native compatible version (Hermes-safe, no async/await)
-// Format matches MovieBox: name="Cinemana | مدبلج عربي", title="1080p"
+// Format: name="Cinemana | مدبلج عربي/mترجم", title="1080p"
 
 var __async = (__this, __arguments, generator) => {
   return new Promise((resolve, reject) => {
     var fulfilled = (value) => {
-      try {
-        step(generator.next(value));
-      } catch (e) {
-        reject(e);
-      }
+      try { step(generator.next(value)); } catch (e) { reject(e); }
     };
     var rejected = (value) => {
-      try {
-        step(generator.throw(value));
-      } catch (e) {
-        reject(e);
-      }
+      try { step(generator.throw(value)); } catch (e) { reject(e); }
     };
     var step = (x) => x.done ? resolve(x.value) : Promise.resolve(x.value).then(fulfilled, rejected);
     step((generator = generator.apply(__this, __arguments)).next());
@@ -32,30 +24,20 @@ var TMDB_API_KEY = "1865f43a0549ca50d341dd9ab8b29f49";
 
 function safeFetch(url, options, timeout) {
   var ms = timeout || FETCH_TIMEOUT;
-  var controller;
-  var tid;
+  var controller, tid;
   try {
     controller = new AbortController();
-    tid = setTimeout(function() {
-      controller.abort();
-    }, ms);
-  } catch (e) {
-    controller = null;
-  }
+    tid = setTimeout(function() { controller.abort(); }, ms);
+  } catch (e) { controller = null; }
   var opts = options || {};
-  if (controller)
-    opts.signal = controller.signal;
-  if (!opts.headers)
-    opts.headers = {};
-  if (!opts.headers["User-Agent"])
-    opts.headers["User-Agent"] = UA;
+  if (controller) opts.signal = controller.signal;
+  if (!opts.headers) opts.headers = {};
+  if (!opts.headers["User-Agent"]) opts.headers["User-Agent"] = UA;
   return fetch(url, opts).then(function(r) {
-    if (tid)
-      clearTimeout(tid);
+    if (tid) clearTimeout(tid);
     return r;
   }).catch(function(e) {
-    if (tid)
-      clearTimeout(tid);
+    if (tid) clearTimeout(tid);
     throw e;
   });
 }
@@ -77,9 +59,7 @@ function similarityScore(a, b) {
   for (var i = 0; i < wa.length; i++) {
     if (wa[i].length > 2 && wb.indexOf(wa[i]) !== -1) common++;
   }
-  if (wa.length > 0) {
-    return Math.floor((common / wa.length) * 80);
-  }
+  if (wa.length > 0) return Math.floor((common / wa.length) * 80);
   return 0;
 }
 
@@ -88,10 +68,9 @@ function cleanUrl(url) {
   return url.replace(/\\/g, "");
 }
 
-function is1080p(qualityStr) {
-  if (!qualityStr) return false;
-  var q = qualityStr.toString().toLowerCase();
-  return q.indexOf("1080") !== -1;
+function is1080p(q) {
+  if (!q) return false;
+  return q.toString().toLowerCase().indexOf("1080") !== -1;
 }
 
 function isDubbedTitle(title) {
@@ -100,65 +79,56 @@ function isDubbedTitle(title) {
   return t.indexOf("مدبلج") !== -1 || t.indexOf("dubbed") !== -1 || t.indexOf("dub") !== -1 || t.indexOf("مدبلجة") !== -1;
 }
 
+function removeDubWords(title) {
+  if (!title) return "";
+  return title.toLowerCase()
+    .replace(/مدبلج[ة]?/g, "")
+    .replace(/dubbed/g, "")
+    .replace(/dub/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 // ============================================================
-// TMDB: Get all possible titles
+// TMDB
 // ============================================================
 function getTMDBInfo(tmdbId, mediaType) {
   return __async(this, null, function* () {
     var type = mediaType === "movie" ? "movie" : "tv";
     var urlEn = TMDB_BASE + "/" + type + "/" + tmdbId + "?api_key=" + TMDB_API_KEY + "&language=en-US";
-
     try {
-      var responseEn = yield safeFetch(urlEn);
-      if (!responseEn.ok) return null;
-      var dataEn = yield responseEn.json();
-      var titleEn = dataEn.title || dataEn.name || "";
-      var originalTitle = dataEn.original_title || dataEn.original_name || titleEn;
-      var originalLang = dataEn.original_language || "en";
+      var r = yield safeFetch(urlEn);
+      if (!r.ok) return null;
+      var d = yield r.json();
+      var titleEn = d.title || d.name || "";
+      var origTitle = d.original_title || d.original_name || titleEn;
+      var origLang = d.original_language || "en";
       var year = "";
-      if (dataEn.release_date) year = dataEn.release_date.substring(0, 4);
-      if (dataEn.first_air_date) year = dataEn.first_air_date.substring(0, 4);
+      if (d.release_date) year = d.release_date.substring(0, 4);
+      if (d.first_air_date) year = d.first_air_date.substring(0, 4);
 
       var titles = [];
       if (titleEn) titles.push(titleEn);
-      if (originalTitle && originalTitle !== titleEn) titles.push(originalTitle);
+      if (origTitle && origTitle !== titleEn) titles.push(origTitle);
 
-      if (originalLang !== "en") {
+      if (origLang !== "en") {
         try {
-          var urlOrig = TMDB_BASE + "/" + type + "/" + tmdbId + "?api_key=" + TMDB_API_KEY + "&language=" + originalLang;
-          var resp = yield safeFetch(urlOrig, null, 8e3);
-          if (resp.ok) {
-            var d = yield resp.json();
-            var t = d.title || d.name || "";
-            if (t && titles.indexOf(t) === -1) titles.push(t);
-          }
+          var r2 = yield safeFetch(TMDB_BASE + "/" + type + "/" + tmdbId + "?api_key=" + TMDB_API_KEY + "&language=" + origLang, null, 8e3);
+          if (r2.ok) { var d2 = yield r2.json(); var t2 = d2.title || d2.name || ""; if (t2 && titles.indexOf(t2) === -1) titles.push(t2); }
         } catch (e) {}
       }
 
       try {
-        var urlAr = TMDB_BASE + "/" + type + "/" + tmdbId + "?api_key=" + TMDB_API_KEY + "&language=ar";
-        var respAr = yield safeFetch(urlAr, null, 8e3);
-        if (respAr.ok) {
-          var dAr = yield respAr.json();
-          var tAr = dAr.title || dAr.name || "";
-          if (tAr && titles.indexOf(tAr) === -1) titles.push(tAr);
-        }
+        var rAr = yield safeFetch(TMDB_BASE + "/" + type + "/" + tmdbId + "?api_key=" + TMDB_API_KEY + "&language=ar", null, 8e3);
+        if (rAr.ok) { var dAr = yield rAr.json(); var tAr = dAr.title || dAr.name || ""; if (tAr && titles.indexOf(tAr) === -1) titles.push(tAr); }
       } catch (e) {}
 
       try {
-        var urlAlt = TMDB_BASE + "/" + type + "/" + tmdbId + "/alternative_titles?api_key=" + TMDB_API_KEY;
-        var respAlt = yield safeFetch(urlAlt, null, 8e3);
-        if (respAlt.ok) {
-          var dAlt = yield respAlt.json();
-          var list = dAlt.results || dAlt.titles || [];
-          for (var i = 0; i < list.length; i++) {
-            var a = list[i].title || list[i].name || "";
-            if (a && titles.indexOf(a) === -1) titles.push(a);
-          }
-        }
+        var rAlt = yield safeFetch(TMDB_BASE + "/" + type + "/" + tmdbId + "/alternative_titles?api_key=" + TMDB_API_KEY, null, 8e3);
+        if (rAlt.ok) { var dAlt = yield rAlt.json(); var list = dAlt.results || dAlt.titles || []; for (var i = 0; i < list.length; i++) { var a = list[i].title || list[i].name || ""; if (a && titles.indexOf(a) === -1) titles.push(a); } }
       } catch (e) {}
 
-      return { titles: titles, originalLanguage: originalLang, year: year, tmdbData: dataEn };
+      return { titles: titles, originalLanguage: origLang, year: year, tmdbData: d };
     } catch (e) {
       console.log("[Cinemana] TMDB error: " + e.message);
       return null;
@@ -167,7 +137,7 @@ function getTMDBInfo(tmdbId, mediaType) {
 }
 
 // ============================================================
-// Cinemana API calls
+// Cinemana API
 // ============================================================
 function searchCinemana(query, type) {
   return __async(this, null, function* () {
@@ -227,14 +197,54 @@ function extractSubtitles(info) {
 }
 
 // ============================================================
-// Find ALL matches (dubbed + subtitled)
+// Score a candidate against TMDB info
 // ============================================================
-function findAllMatches(tmdbInfo, mediaType) {
+function scoreCandidate(item, tmdbInfo, isSeries) {
+  var itemTitle = item.en_title || item.ar_title || item.videoTitle || item.title || item.name || "";
+  var itemOriginal = item.other_title || item.original_title || itemTitle;
+  var itemKind = String(item.kind || "");
+  var itemYear = "";
+  if (item.year) itemYear = String(item.year);
+  else if (item.createdate) itemYear = String(item.createdate).substring(0, 4);
+
+  var isItemSeries = itemKind === "2";
+  if (isSeries !== isItemSeries) return { score: -999, isDubbed: false, title: itemTitle };
+
+  var score = 0;
+  for (var t = 0; t < tmdbInfo.titles.length; t++) {
+    score = Math.max(score, similarityScore(itemTitle, tmdbInfo.titles[t]));
+    score = Math.max(score, similarityScore(itemOriginal, tmdbInfo.titles[t]));
+  }
+
+  // Also score against title WITHOUT dub words (for dubbed results)
+  var cleanItemTitle = removeDubWords(itemTitle);
+  var cleanItemOriginal = removeDubWords(itemOriginal);
+  for (var t = 0; t < tmdbInfo.titles.length; t++) {
+    score = Math.max(score, similarityScore(cleanItemTitle, tmdbInfo.titles[t]));
+    score = Math.max(score, similarityScore(cleanItemOriginal, tmdbInfo.titles[t]));
+  }
+
+  if (tmdbInfo.year && itemYear) {
+    if (itemYear === tmdbInfo.year) score += 25;
+    else if (Math.abs(Number(itemYear) - Number(tmdbInfo.year)) <= 1) score += 10;
+  }
+
+  var dubbed = isDubbedTitle(itemTitle) || isDubbedTitle(item.ar_title) || isDubbedTitle(item.en_title);
+
+  return { score: score, isDubbed: dubbed, title: itemTitle, id: String(item.nb || item.id || "").trim(), item: item };
+}
+
+// ============================================================
+// Find matches — strict: only return dubbed if it truly matches
+// ============================================================
+function findMatches(tmdbInfo, mediaType) {
   return __async(this, null, function* () {
     var searchType = mediaType === "movie" ? "movie" : "series";
+    var isSeries = mediaType !== "movie";
     var allResults = [];
     var queries = [];
 
+    // Build queries
     for (var t = 0; t < tmdbInfo.titles.length; t++) {
       var title = tmdbInfo.titles[t];
       if (title && queries.indexOf(title) === -1) queries.push(title);
@@ -244,17 +254,7 @@ function findAllMatches(tmdbInfo, mediaType) {
       if (first && first.length > 3 && queries.indexOf(first) === -1) queries.push(first);
     }
 
-    var dubbedQueries = [];
-    for (var q = 0; q < queries.length; q++) {
-      if (queries[q].indexOf("مدبلج") === -1 && queries[q].indexOf("dubbed") === -1) {
-        dubbedQueries.push(queries[q] + " مدبلج");
-        dubbedQueries.push(queries[q] + " dubbed");
-      }
-    }
-    queries = queries.concat(dubbedQueries);
-
-    console.log("[Cinemana] Search queries: " + queries.join(" | "));
-
+    // Search with original queries
     for (var q = 0; q < queries.length; q++) {
       try {
         var results = yield searchCinemana(queries[q], searchType);
@@ -262,113 +262,110 @@ function findAllMatches(tmdbInfo, mediaType) {
           var newId = String(results[r].nb || results[r].id || "").trim();
           var existing = false;
           for (var e = 0; e < allResults.length; e++) {
-            if (String(allResults[e].nb || allResults[e].id || "").trim() === newId) {
-              existing = true;
-              break;
-            }
+            if (String(allResults[e].nb || allResults[e].id || "").trim() === newId) { existing = true; break; }
           }
           if (!existing) allResults.push(results[r]);
         }
       } catch (e) {}
     }
 
-    console.log("[Cinemana] Total unique results: " + allResults.length);
-
-    var matches = [];
-    var isSeries = mediaType !== "movie";
-
+    // Score all results
+    var scored = [];
     for (var i = 0; i < allResults.length; i++) {
-      var item = allResults[i];
-      var itemTitle = item.en_title || item.ar_title || item.videoTitle || item.title || item.name || "";
-      var itemOriginal = item.other_title || item.original_title || itemTitle;
-      var itemKind = String(item.kind || "");
-      var itemYear = "";
-      if (item.year) itemYear = String(item.year);
-      else if (item.createdate) itemYear = String(item.createdate).substring(0, 4);
-
-      var isItemSeries = itemKind === "2";
-      if (isSeries !== isItemSeries) continue;
-
-      var score = 0;
-      for (var t = 0; t < tmdbInfo.titles.length; t++) {
-        score = Math.max(score, similarityScore(itemTitle, tmdbInfo.titles[t]));
-        score = Math.max(score, similarityScore(itemOriginal, tmdbInfo.titles[t]));
-      }
-
-      if (tmdbInfo.year && itemYear) {
-        if (itemYear === tmdbInfo.year) score += 25;
-        else if (Math.abs(Number(itemYear) - Number(tmdbInfo.year)) <= 1) score += 10;
-      }
-
-      if (isSeries !== isItemSeries) score -= 30;
-
-      console.log("[Cinemana] Candidate: " + itemTitle + " | score=" + score + " | year=" + itemYear);
-
-      if (score >= 25) {
-        var dubbed = isDubbedTitle(itemTitle) || isDubbedTitle(item.ar_title) || isDubbedTitle(item.en_title);
-        matches.push({
-          item: item,
-          score: score,
-          id: String(item.nb || item.id || "").trim(),
-          isDubbed: dubbed,
-          title: itemTitle
-        });
+      var sc = scoreCandidate(allResults[i], tmdbInfo, isSeries);
+      if (sc.score >= 30) {
+        scored.push(sc);
+        console.log("[Cinemana] Candidate: " + sc.title + " | score=" + sc.score + " | dubbed=" + sc.isDubbed);
       }
     }
 
-    if (matches.length === 0) {
-      console.log("[Cinemana] No matches, trying fallback");
-      var bestScore = -999;
-      var bestItem = null;
-      for (var i = 0; i < allResults.length; i++) {
-        var item = allResults[i];
-        var itemTitle = item.en_title || item.ar_title || item.videoTitle || item.title || item.name || "";
-        var s = 0;
-        for (var t = 0; t < tmdbInfo.titles.length; t++) {
-          s = Math.max(s, similarityScore(itemTitle, tmdbInfo.titles[t]));
-        }
-        var itemYear = "";
-        if (item.year) itemYear = String(item.year);
-        if (tmdbInfo.year && itemYear === tmdbInfo.year) s += 20;
-        if (s > bestScore) {
-          bestScore = s;
-          bestItem = item;
+    if (scored.length === 0) {
+      console.log("[Cinemana] No matches from original search");
+      return { sub: null, dub: null };
+    }
+
+    scored.sort(function(a, b) { return b.score - a.score; });
+
+    // Pick best sub (non-dubbed)
+    var bestSub = null;
+    for (var i = 0; i < scored.length; i++) {
+      if (!scored[i].isDubbed) { bestSub = scored[i]; break; }
+    }
+
+    // Pick best dub — MUST have high score AND match the title closely
+    var bestDub = null;
+    for (var i = 0; i < scored.length; i++) {
+      if (scored[i].isDubbed) {
+        // STRICT: dubbed must score 60+ AND year must match (if available)
+        if (scored[i].score >= 60) {
+          var itemYear = "";
+          if (scored[i].item.year) itemYear = String(scored[i].item.year);
+          else if (scored[i].item.createdate) itemYear = String(scored[i].item.createdate).substring(0, 4);
+
+          if (!tmdbInfo.year || !itemYear || itemYear === tmdbInfo.year) {
+            bestDub = scored[i];
+            break;
+          }
         }
       }
-      if (bestItem) {
-        var dubbed = isDubbedTitle(bestItem.en_title || bestItem.ar_title || bestItem.title || bestItem.name || "");
-        matches.push({ item: bestItem, score: bestScore, id: String(bestItem.nb || bestItem.id || "").trim(), isDubbed: dubbed, title: bestItem.en_title || bestItem.ar_title || "" });
+    }
+
+    // If no good dub found in original search, try explicit dubbed search
+    if (!bestDub) {
+      console.log("[Cinemana] No verified dub in original results. Trying explicit dub search...");
+      var dubQueries = [];
+      for (var q = 0; q < queries.length; q++) {
+        if (queries[q].indexOf("مدبلج") === -1 && queries[q].indexOf("dubbed") === -1) {
+          dubQueries.push(queries[q] + " مدبلج");
+          dubQueries.push(queries[q] + " dubbed");
+        }
+      }
+
+      var dubResults = [];
+      for (var q = 0; q < dubQueries.length; q++) {
+        try {
+          var results = yield searchCinemana(dubQueries[q], searchType);
+          for (var r = 0; r < results.length; r++) {
+            var newId = String(results[r].nb || results[r].id || "").trim();
+            var existing = false;
+            for (var e = 0; e < dubResults.length; e++) {
+              if (String(dubResults[e].nb || dubResults[e].id || "").trim() === newId) { existing = true; break; }
+            }
+            if (!existing) dubResults.push(results[r]);
+          }
+        } catch (e) {}
+      }
+
+      // Score dub results with HIGHER threshold
+      var dubScored = [];
+      for (var i = 0; i < dubResults.length; i++) {
+        var sc = scoreCandidate(dubResults[i], tmdbInfo, isSeries);
+        // For explicit dub search, require 70+ score
+        if (sc.score >= 70 && sc.isDubbed) {
+          dubScored.push(sc);
+          console.log("[Cinemana] Dub candidate: " + sc.title + " | score=" + sc.score);
+        }
+      }
+
+      if (dubScored.length > 0) {
+        dubScored.sort(function(a, b) { return b.score - a.score; });
+        bestDub = dubScored[0];
       }
     }
 
-    matches.sort(function(a, b) { return b.score - a.score; });
+    console.log("[Cinemana] Final: sub=" + (bestSub ? bestSub.title + "(" + bestSub.score + ")" : "none") + 
+                " | dub=" + (bestDub ? bestDub.title + "(" + bestDub.score + ")" : "none"));
 
-    var finalMatches = [];
-    var seenDubbed = { dubbed: false, sub: false };
-    for (var i = 0; i < matches.length; i++) {
-      var key = matches[i].isDubbed ? "dubbed" : "sub";
-      if (!seenDubbed[key]) {
-        seenDubbed[key] = true;
-        finalMatches.push(matches[i]);
-      }
-    }
-
-    console.log("[Cinemana] Final matches: " + finalMatches.length);
-    for (var i = 0; i < finalMatches.length; i++) {
-      console.log("[Cinemana] Match " + (i+1) + ": " + finalMatches[i].title + " | ID=" + finalMatches[i].id + " | Dubbed=" + finalMatches[i].isDubbed);
-    }
-
-    return finalMatches;
+    return { sub: bestSub, dub: bestDub };
   });
 }
 
 // ============================================================
-// Get streams from a match — MovieBox format
+// Get streams from a match
 // ============================================================
 function getStreamsFromMatch(match, mediaType, season, episode) {
   return __async(this, null, function* () {
     var streams = [];
-    // MovieBox format: name = "Provider | Label", title = "1080p"
     var nameLabel = match.isDubbed ? "Cinemana | مدبلج عربي" : "Cinemana | مترجم";
 
     if (mediaType === "movie") {
@@ -381,12 +378,7 @@ function getStreamsFromMatch(match, mediaType, season, episode) {
         if (!q.videoUrl) continue;
         var qName = q.resolution || q.name || "";
         if (!is1080p(qName)) continue;
-        var stream = {
-          name: nameLabel,
-          title: "1080p",
-          url: cleanUrl(q.videoUrl),
-          quality: qName
-        };
+        var stream = { name: nameLabel, title: "1080p", url: cleanUrl(q.videoUrl), quality: qName };
         if (!match.isDubbed && subs.length > 0) stream.subtitles = subs;
         streams.push(stream);
       }
@@ -417,12 +409,7 @@ function getStreamsFromMatch(match, mediaType, season, episode) {
         if (!q.videoUrl) continue;
         var qName = q.resolution || q.name || "";
         if (!is1080p(qName)) continue;
-        var stream = {
-          name: nameLabel,
-          title: "1080p",
-          url: cleanUrl(q.videoUrl),
-          quality: qName
-        };
+        var stream = { name: nameLabel, title: "1080p", url: cleanUrl(q.videoUrl), quality: qName };
         if (!match.isDubbed && subs.length > 0) stream.subtitles = subs;
         streams.push(stream);
       }
@@ -433,7 +420,7 @@ function getStreamsFromMatch(match, mediaType, season, episode) {
 }
 
 // ============================================================
-// Main: Get streams
+// Main
 // ============================================================
 function getStreams(tmdbId, mediaType, season, episode) {
   return __async(this, null, function* () {
@@ -452,22 +439,26 @@ function getStreams(tmdbId, mediaType, season, episode) {
         return [];
       }
       console.log("[Cinemana] TMDB titles: " + tmdbInfo.titles.join(" | "));
+      console.log("[Cinemana] TMDB year: " + tmdbInfo.year);
 
-      var matches = yield findAllMatches(tmdbInfo, mediaType);
-      if (matches.length === 0) {
-        console.log("[Cinemana] No matches found");
-        return [];
-      }
-
+      var matches = yield findMatches(tmdbInfo, mediaType);
       var allStreams = [];
-      for (var m = 0; m < matches.length; m++) {
-        var matchStreams = yield getStreamsFromMatch(matches[m], mediaType, season, episode);
-        for (var s = 0; s < matchStreams.length; s++) {
-          allStreams.push(matchStreams[s]);
-        }
+
+      if (matches.sub) {
+        var subStreams = yield getStreamsFromMatch(matches.sub, mediaType, season, episode);
+        for (var s = 0; s < subStreams.length; s++) allStreams.push(subStreams[s]);
       }
 
-      console.log("[Cinemana] === Done: " + allStreams.length + " streams (1080p only) in " + (Date.now() - t0) + "ms ===");
+      if (matches.dub) {
+        var dubStreams = yield getStreamsFromMatch(matches.dub, mediaType, season, episode);
+        for (var s = 0; s < dubStreams.length; s++) allStreams.push(dubStreams[s]);
+      }
+
+      if (allStreams.length === 0) {
+        console.log("[Cinemana] No streams found");
+      }
+
+      console.log("[Cinemana] === Done: " + allStreams.length + " streams in " + (Date.now() - t0) + "ms ===");
       return allStreams;
     } catch (err) {
       console.log("[Cinemana] FATAL ERROR: " + (err.message || err));
