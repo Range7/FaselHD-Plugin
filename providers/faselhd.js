@@ -1,5 +1,6 @@
 // FaselHD Scraper for Nuvio Local Scrapers
 // React Native compatible version
+// Modified: Only returns 1080p quality streams
 
 var __async = (__this, __arguments, generator) => {
   return new Promise((resolve, reject) => {
@@ -74,8 +75,11 @@ function getStreams(tmdbId, mediaType, season, episode) {
         return [];
       }
       var data = yield response.json();
-      var streams = data.streams || [];
-      console.log("[FaselHD] === Done: " + streams.length + " streams in " + (Date.now() - t0) + "ms ===");
+      var streams = (data.streams || []).filter(function(s) {
+        var q = (s.quality || s.resolution || s.label || s.name || "").toString().toLowerCase();
+        return q.indexOf("1080") !== -1;
+      });
+      console.log("[FaselHD] === Done: " + streams.length + " streams (1080p only) in " + (Date.now() - t0) + "ms ===");
       return streams;
     } catch (error) {
       console.log("[FaselHD] Error: " + error.message);
