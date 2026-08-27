@@ -1,7 +1,7 @@
 // Cinemana Scraper for Nuvio Local Scrapers
-// Multi-language exact search based on content origin language
+// Multi-language exact search + 1080p only
 // React Native compatible version (Hermes-safe, no async/await)
-// API based on: https://github.com/hasanpasha/cinemana
+// API: https://cinemana.shabakaty.com/api/android
 
 var __async = (__this, __arguments, generator) => {
   return new Promise((resolve, reject) => {
@@ -24,254 +24,12 @@ var __async = (__this, __arguments, generator) => {
   });
 };
 
-// ============================================================
-// Configuration
-// ============================================================
 var CINEMANA_BASE = "https://cinemana.shabakaty.com/api/android";
 var TMDB_BASE = "https://api.themoviedb.org/3";
 var UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36";
 var FETCH_TIMEOUT = 15e3;
 var TMDB_API_KEY = "1865f43a0549ca50d341dd9ab8b29f49";
 
-// ============================================================
-// Language map: original_language -> search languages
-// ============================================================
-var LANG_SEARCH_MAP = {
-  "en": ["en", "ar"],
-  "ar": ["ar", "en"],
-  "tr": ["tr", "ar", "en"],
-  "ja": ["ja", "ar", "en"],
-  "ko": ["ko", "ar", "en"],
-  "zh": ["zh", "ar", "en"],
-  "hi": ["hi", "ar", "en"],
-  "es": ["es", "ar", "en"],
-  "fr": ["fr", "ar", "en"],
-  "de": ["de", "ar", "en"],
-  "it": ["it", "ar", "en"],
-  "ru": ["ru", "ar", "en"],
-  "pt": ["pt", "ar", "en"],
-  "pl": ["pl", "ar", "en"],
-  "nl": ["nl", "ar", "en"],
-  "sv": ["sv", "ar", "en"],
-  "da": ["da", "ar", "en"],
-  "no": ["no", "ar", "en"],
-  "fi": ["fi", "ar", "en"],
-  "th": ["th", "ar", "en"],
-  "id": ["id", "ar", "en"],
-  "tl": ["tl", "ar", "en"],
-  "vi": ["vi", "ar", "en"],
-  "ms": ["ms", "ar", "en"],
-  "fa": ["fa", "ar", "en"],
-  "he": ["he", "ar", "en"],
-  "ur": ["ur", "ar", "en"],
-  "bn": ["bn", "ar", "en"],
-  "ta": ["ta", "ar", "en"],
-  "te": ["te", "ar", "en"],
-  "mr": ["mr", "ar", "en"],
-  "pa": ["pa", "ar", "en"],
-  "gu": ["gu", "ar", "en"],
-  "kn": ["kn", "ar", "en"],
-  "ml": ["ml", "ar", "en"],
-  "uk": ["uk", "ar", "en"],
-  "cs": ["cs", "ar", "en"],
-  "sk": ["sk", "ar", "en"],
-  "hu": ["hu", "ar", "en"],
-  "ro": ["ro", "ar", "en"],
-  "bg": ["bg", "ar", "en"],
-  "hr": ["hr", "ar", "en"],
-  "sr": ["sr", "ar", "en"],
-  "sl": ["sl", "ar", "en"],
-  "lt": ["lt", "ar", "en"],
-  "lv": ["lv", "ar", "en"],
-  "et": ["et", "ar", "en"],
-  "is": ["is", "ar", "en"],
-  "el": ["el", "ar", "en"],
-  "la": ["la", "ar", "en"],
-  "sw": ["sw", "ar", "en"],
-  "af": ["af", "ar", "en"],
-  "sq": ["sq", "ar", "en"],
-  "mk": ["mk", "ar", "en"],
-  "ka": ["ka", "ar", "en"],
-  "hy": ["hy", "ar", "en"],
-  "az": ["az", "ar", "en"],
-  "kk": ["kk", "ar", "en"],
-  "uz": ["uz", "ar", "en"],
-  "ky": ["ky", "ar", "en"],
-  "mn": ["mn", "ar", "en"],
-  "ne": ["ne", "ar", "en"],
-  "si": ["si", "ar", "en"],
-  "my": ["my", "ar", "en"],
-  "km": ["km", "ar", "en"],
-  "lo": ["lo", "ar", "en"],
-  "am": ["am", "ar", "en"],
-  "so": ["so", "ar", "en"],
-  "ha": ["ha", "ar", "en"],
-  "yo": ["yo", "ar", "en"],
-  "zu": ["zu", "ar", "en"],
-  "xh": ["xh", "ar", "en"],
-  "cy": ["cy", "ar", "en"],
-  "ga": ["ga", "ar", "en"],
-  "eu": ["eu", "ar", "en"],
-  "ca": ["ca", "ar", "en"],
-  "gl": ["gl", "ar", "en"],
-  "ast": ["ast", "ar", "en"],
-  "br": ["br", "ar", "en"],
-  "co": ["co", "ar", "en"],
-  "oc": ["oc", "ar", "en"],
-  "rm": ["rm", "ar", "en"],
-  "lb": ["lb", "ar", "en"],
-  "gd": ["gd", "ar", "en"],
-  "kw": ["kw", "ar", "en"],
-  "gv": ["gv", "ar", "en"],
-  "mi": ["mi", "ar", "en"],
-  "sm": ["sm", "ar", "en"],
-  "to": ["to", "ar", "en"],
-  "fj": ["fj", "ar", "en"],
-  "bi": ["bi", "ar", "en"],
-  "ho": ["ho", "ar", "en"],
-  "mg": ["mg", "ar", "en"],
-  "ny": ["ny", "ar", "en"],
-  "sn": ["sn", "ar", "en"],
-  "st": ["st", "ar", "en"],
-  "ts": ["ts", "ar", "en"],
-  "tn": ["tn", "ar", "en"],
-  "ss": ["ss", "ar", "en"],
-  "ve": ["ve", "ar", "en"],
-  "nr": ["nr", "ar", "en"],
-  "pi": ["pi", "ar", "en"],
-  "sa": ["sa", "ar", "en"],
-  "bo": ["bo", "ar", "en"],
-  "dz": ["dz", "ar", "en"],
-  "jv": ["jv", "ar", "en"],
-  "su": ["su", "ar", "en"],
-  "ceb": ["ceb", "ar", "en"],
-  "ilo": ["ilo", "ar", "en"],
-  "war": ["war", "ar", "en"],
-  "pam": ["pam", "ar", "en"],
-  "pag": ["pag", "ar", "en"],
-  "bik": ["bik", "ar", "en"],
-  "hil": ["hil", "ar", "en"],
-  "krj": ["krj", "ar", "en"],
-  "mdh": ["mdh", "ar", "en"],
-  "min": ["min", "ar", "en"],
-  "bug": ["bug", "ar", "en"],
-  "mak": ["mak", "ar", "en"],
-  "gor": ["gor", "ar", "en"],
-  "tet": ["tet", "ar", "en"],
-  "ch": ["ch", "ar", "en"],
-  "ps": ["ps", "ar", "en"],
-  "ku": ["ku", "ar", "en"],
-  "sd": ["sd", "ar", "en"],
-  "ks": ["ks", "ar", "en"],
-  "doi": ["doi", "ar", "en"],
-  "kok": ["kok", "ar", "en"],
-  "mni": ["mni", "ar", "en"],
-  "sat": ["sat", "ar", "en"],
-  "lus": ["lus", "ar", "en"],
-  "kha": ["kha", "ar", "en"],
-  "tcy": ["tcy", "ar", "en"],
-  "brx": ["brx", "ar", "en"],
-  "mai": ["mai", "ar", "en"],
-  "bho": ["bho", "ar", "en"],
-  "mag": ["mag", "ar", "en"],
-  "awa": ["awa", "ar", "en"],
-  "raj": ["raj", "ar", "en"],
-  "hoc": ["hoc", "ar", "en"],
-  "kfr": ["kfr", "ar", "en"],
-  "gbm": ["gbm", "ar", "en"],
-  "njo": ["njo", "ar", "en"],
-  "sck": ["sck", "ar", "en"],
-  "xnr": ["xnr", "ar", "en"],
-  "wbr": ["wbr", "ar", "en"],
-  "kru": ["kru", "ar", "en"],
-  "bhb": ["bhb", "ar", "en"],
-  "mwr": ["mwr", "ar", "en"],
-  "hne": ["hne", "ar", "en"],
-  "bjj": ["bjj", "ar", "en"],
-  "noe": ["noe", "ar", "en"],
-  "bns": ["bns", "ar", "en"],
-  "khn": ["khn", "ar", "en"],
-  "bfq": ["bfq", "ar", "en"],
-  "tcz": ["tcz", "ar", "en"],
-  "as": ["as", "ar", "en"],
-  "or": ["or", "ar", "en"],
-  "krc": ["krc", "ar", "en"],
-  "ady": ["ady", "ar", "en"],
-  "kbd": ["kbd", "ar", "en"],
-  "av": ["av", "ar", "en"],
-  "ce": ["ce", "ar", "en"],
-  "inh": ["inh", "ar", "en"],
-  "lbe": ["lbe", "ar", "en"],
-  "tab": ["tab", "ar", "en"],
-  "lez": ["lez", "ar", "en"],
-  "tt": ["tt", "ar", "en"],
-  "ba": ["ba", "ar", "en"],
-  "cv": ["cv", "ar", "en"],
-  "chm": ["chm", "ar", "en"],
-  "udm": ["udm", "ar", "en"],
-  "mhr": ["mhr", "ar", "en"],
-  "sah": ["sah", "ar", "en"],
-  "xal": ["xal", "ar", "en"],
-  "tyv": ["tyv", "ar", "en"],
-  "alt": ["alt", "ar", "en"],
-  "kjh": ["kjh", "ar", "en"],
-  "sel": ["sel", "ar", "en"],
-  "ykg": ["ykg", "ar", "en"],
-  "enm": ["enm", "ar", "en"],
-  "ang": ["ang", "ar", "en"],
-  "frr": ["frr", "ar", "en"],
-  "nds": ["nds", "ar", "en"],
-  "pfl": ["pfl", "ar", "en"],
-  "bar": ["bar", "ar", "en"],
-  "cim": ["cim", "ar", "en"],
-  "vec": ["vec", "ar", "en"],
-  "fur": ["fur", "ar", "en"],
-  "lij": ["lij", "ar", "en"],
-  "nap": ["nap", "ar", "en"],
-  "scn": ["scn", "ar", "en"],
-  "sc": ["sc", "ar", "en"],
-  "srd": ["srd", "ar", "en"],
-  "lmo": ["lmo", "ar", "en"],
-  "eml": ["eml", "ar", "en"],
-  "rgn": ["rgn", "ar", "en"],
-  "nrm": ["nrm", "ar", "en"],
-  "pms": ["pms", "ar", "en"],
-  "lld": ["lld", "ar", "en"],
-  "mhn": ["mhn", "ar", "en"],
-  "frp": ["frp", "ar", "en"],
-  "pcd": ["pcd", "ar", "en"],
-  "gsw": ["gsw", "ar", "en"],
-  "wae": ["wae", "ar", "en"],
-  "goh": ["goh", "ar", "en"],
-  "gmh": ["gmh", "ar", "en"],
-  "osx": ["osx", "ar", "en"],
-  "non": ["non", "ar", "en"],
-  "fro": ["fro", "ar", "en"],
-  "cym": ["cym", "ar", "en"],
-  "gla": ["gla", "ar", "en"],
-  "gle": ["gle", "ar", "en"],
-  "cor": ["cor", "ar", "en"],
-  "bre": ["bre", "ar", "en"],
-  "sco": ["sco", "ar", "en"],
-  "fry": ["fry", "ar", "en"],
-  "li": ["li", "ar", "en"],
-  "zea": ["zea", "ar", "en"],
-  "vls": ["vls", "ar", "en"],
-  "lim": ["lim", "ar", "en"],
-  "nds-nl": ["nds-nl", "ar", "en"],
-  "afh": ["afh", "ar", "en"],
-  "mul": ["mul", "ar", "en"]
-};
-
-function getSearchLanguages(originalLang) {
-  var langs = LANG_SEARCH_MAP[originalLang];
-  if (langs && langs.length > 0) return langs;
-  return [originalLang, "ar", "en"];
-}
-
-// ============================================================
-// Helpers
-// ============================================================
 function safeFetch(url, options, timeout) {
   var ms = timeout || FETCH_TIMEOUT;
   var controller;
@@ -330,32 +88,72 @@ function cleanUrl(url) {
   return url.replace(/\\/g, "");
 }
 
+function is1080p(qualityStr) {
+  if (!qualityStr) return false;
+  var q = qualityStr.toString().toLowerCase();
+  return q.indexOf("1080") !== -1;
+}
+
 // ============================================================
-// TMDB: Get title + original language
+// TMDB: Get title in English + original language
 // ============================================================
 function getTMDBInfo(tmdbId, mediaType) {
   return __async(this, null, function* () {
     var type = mediaType === "movie" ? "movie" : "tv";
-    var url = TMDB_BASE + "/" + type + "/" + tmdbId + "?api_key=" + TMDB_API_KEY + "&language=en-US";
+    var urlEn = TMDB_BASE + "/" + type + "/" + tmdbId + "?api_key=" + TMDB_API_KEY + "&language=en-US";
+
     try {
-      var response = yield safeFetch(url);
-      if (!response.ok) {
-        console.log("[Cinemana] TMDB returned " + response.status);
+      var responseEn = yield safeFetch(urlEn);
+      if (!responseEn.ok) {
+        console.log("[Cinemana] TMDB EN returned " + responseEn.status);
         return null;
       }
-      var data = yield response.json();
-      var title = data.title || data.name || "";
-      var originalTitle = data.original_title || data.original_name || title;
-      var originalLang = data.original_language || "en";
+      var dataEn = yield responseEn.json();
+      var titleEn = dataEn.title || dataEn.name || "";
+      var originalTitle = dataEn.original_title || dataEn.original_name || titleEn;
+      var originalLang = dataEn.original_language || "en";
       var year = "";
-      if (data.release_date) year = data.release_date.substring(0, 4);
-      if (data.first_air_date) year = data.first_air_date.substring(0, 4);
+      if (dataEn.release_date) year = dataEn.release_date.substring(0, 4);
+      if (dataEn.first_air_date) year = dataEn.first_air_date.substring(0, 4);
+
+      var titles = [titleEn, originalTitle];
+
+      // Also get title in original language
+      if (originalLang !== "en") {
+        try {
+          var urlOrig = TMDB_BASE + "/" + type + "/" + tmdbId + "?api_key=" + TMDB_API_KEY + "&language=" + originalLang;
+          var responseOrig = yield safeFetch(urlOrig, null, 8e3);
+          if (responseOrig.ok) {
+            var dataOrig = yield responseOrig.json();
+            var titleOrig = dataOrig.title || dataOrig.name || "";
+            if (titleOrig && titleOrig !== titleEn && titleOrig !== originalTitle) {
+              titles.push(titleOrig);
+            }
+          }
+        } catch (e) {}
+      }
+
+      // Get alternative titles
+      try {
+        var urlAlt = TMDB_BASE + "/" + type + "/" + tmdbId + "/alternative_titles?api_key=" + TMDB_API_KEY;
+        var responseAlt = yield safeFetch(urlAlt, null, 8e3);
+        if (responseAlt.ok) {
+          var dataAlt = yield responseAlt.json();
+          var altList = dataAlt.results || dataAlt.titles || [];
+          for (var i = 0; i < altList.length; i++) {
+            var altTitle = altList[i].title || altList[i].name || "";
+            if (altTitle && titles.indexOf(altTitle) === -1) {
+              titles.push(altTitle);
+            }
+          }
+        }
+      } catch (e) {}
+
       return {
-        title: title,
-        originalTitle: originalTitle,
+        titles: titles,
         originalLanguage: originalLang,
         year: year,
-        tmdbData: data
+        tmdbData: dataEn
       };
     } catch (e) {
       console.log("[Cinemana] TMDB error: " + e.message);
@@ -365,7 +163,7 @@ function getTMDBInfo(tmdbId, mediaType) {
 }
 
 // ============================================================
-// Cinemana: Search using AdvancedSearch endpoint
+// Cinemana: Search
 // ============================================================
 function searchCinemana(query, type) {
   return __async(this, null, function* () {
@@ -379,7 +177,7 @@ function searchCinemana(query, type) {
       }
       var data = yield response.json();
       if (Array.isArray(data)) {
-        console.log("[Cinemana] Search found " + data.length + " results");
+        console.log("[Cinemana] Search found " + data.length + " for: " + query);
         return data;
       }
       return [];
@@ -390,26 +188,6 @@ function searchCinemana(query, type) {
   });
 }
 
-// ============================================================
-// Cinemana: Get video info (includes subtitles)
-// ============================================================
-function getVideoInfo(cinemanaId) {
-  return __async(this, null, function* () {
-    var url = CINEMANA_BASE + "/allVideoInfo/id/" + cinemanaId;
-    try {
-      var response = yield safeFetch(url, null, 10e3);
-      if (!response.ok) return null;
-      return yield response.json();
-    } catch (e) {
-      console.log("[Cinemana] Video info error: " + e.message);
-      return null;
-    }
-  });
-}
-
-// ============================================================
-// Cinemana: Get stream files
-// ============================================================
 function getTranscodedFiles(cinemanaId) {
   return __async(this, null, function* () {
     var url = CINEMANA_BASE + "/transcoddedFiles/id/" + cinemanaId;
@@ -419,15 +197,11 @@ function getTranscodedFiles(cinemanaId) {
       var data = yield response.json();
       return Array.isArray(data) ? data : [];
     } catch (e) {
-      console.log("[Cinemana] Transcoded files error: " + e.message);
       return [];
     }
   });
 }
 
-// ============================================================
-// Cinemana: Get series episodes
-// ============================================================
 function getSeriesEpisodes(seriesId) {
   return __async(this, null, function* () {
     var url = CINEMANA_BASE + "/videoSeason/id/" + seriesId;
@@ -437,15 +211,24 @@ function getSeriesEpisodes(seriesId) {
       var data = yield response.json();
       return Array.isArray(data) ? data : [];
     } catch (e) {
-      console.log("[Cinemana] Series episodes error: " + e.message);
       return [];
     }
   });
 }
 
-// ============================================================
-// Extract subtitles from video info
-// ============================================================
+function getVideoInfo(cinemanaId) {
+  return __async(this, null, function* () {
+    var url = CINEMANA_BASE + "/allVideoInfo/id/" + cinemanaId;
+    try {
+      var response = yield safeFetch(url, null, 10e3);
+      if (!response.ok) return null;
+      return yield response.json();
+    } catch (e) {
+      return null;
+    }
+  });
+}
+
 function extractSubtitles(videoInfo) {
   var out = [];
   if (!videoInfo || !videoInfo.translations) return out;
@@ -472,21 +255,43 @@ function findBestMatch(tmdbInfo, mediaType) {
     var allResults = [];
     var queries = [];
 
-    if (tmdbInfo.originalTitle && tmdbInfo.originalTitle !== tmdbInfo.title) {
-      queries.push(tmdbInfo.originalTitle);
+    // Build unique queries from all titles
+    for (var t = 0; t < tmdbInfo.titles.length; t++) {
+      var title = tmdbInfo.titles[t];
+      if (title && queries.indexOf(title) === -1) {
+        queries.push(title);
+      }
+      // Also add without special chars
+      var clean = title.replace(/[^\w\s]/g, " ").replace(/\s+/g, " ").trim();
+      if (clean && clean !== title && queries.indexOf(clean) === -1) {
+        queries.push(clean);
+      }
+      // Also add first word only (for long titles)
+      var firstWord = title.split(" ")[0];
+      if (firstWord && firstWord.length > 3 && queries.indexOf(firstWord) === -1) {
+        queries.push(firstWord);
+      }
     }
-    queries.push(tmdbInfo.title);
 
-    var cleanTitle = tmdbInfo.title.replace(/[^\w\s]/g, " ").replace(/\s+/g, " ").trim();
-    if (cleanTitle && cleanTitle !== tmdbInfo.title) {
-      queries.push(cleanTitle);
-    }
+    console.log("[Cinemana] Search queries: " + queries.join(" | "));
 
     for (var q = 0; q < queries.length; q++) {
       try {
         var results = yield searchCinemana(queries[q], searchType);
         for (var r = 0; r < results.length; r++) {
-          allResults.push(results[r]);
+          // Avoid duplicates
+          var existing = false;
+          var newId = String(results[r].nb || results[r].id || "").trim();
+          for (var e = 0; e < allResults.length; e++) {
+            var exId = String(allResults[e].nb || allResults[e].id || "").trim();
+            if (exId === newId) {
+              existing = true;
+              break;
+            }
+          }
+          if (!existing) {
+            allResults.push(results[r]);
+          }
         }
       } catch (e) {}
     }
@@ -496,7 +301,7 @@ function findBestMatch(tmdbInfo, mediaType) {
       return null;
     }
 
-    console.log("[Cinemana] Total raw results: " + allResults.length);
+    console.log("[Cinemana] Total unique results: " + allResults.length);
 
     var scored = [];
     var isSeries = mediaType !== "movie";
@@ -511,19 +316,32 @@ function findBestMatch(tmdbInfo, mediaType) {
       else if (item.createdate) itemYear = String(item.createdate).substring(0, 4);
 
       var isItemSeries = itemKind === "2";
-      if (isSeries !== isItemSeries) continue;
 
+      // Score against ALL TMDB titles
       var score = 0;
-      score = Math.max(score, similarityScore(itemTitle, tmdbInfo.title));
-      score = Math.max(score, similarityScore(itemOriginal, tmdbInfo.title));
-      score = Math.max(score, similarityScore(itemTitle, tmdbInfo.originalTitle));
-      score = Math.max(score, similarityScore(itemOriginal, tmdbInfo.originalTitle));
-
-      if (tmdbInfo.year && itemYear && itemYear === tmdbInfo.year) {
-        score += 10;
+      for (var t = 0; t < tmdbInfo.titles.length; t++) {
+        var tmTitle = tmdbInfo.titles[t];
+        score = Math.max(score, similarityScore(itemTitle, tmTitle));
+        score = Math.max(score, similarityScore(itemOriginal, tmTitle));
       }
 
-      if (score >= 50) {
+      // Year is very important
+      if (tmdbInfo.year && itemYear) {
+        if (itemYear === tmdbInfo.year) {
+          score += 25;
+        } else if (Math.abs(Number(itemYear) - Number(tmdbInfo.year)) <= 1) {
+          score += 10;
+        }
+      }
+
+      // Type mismatch penalty
+      if (isSeries !== isItemSeries) {
+        score -= 30;
+      }
+
+      console.log("[Cinemana] Candidate: " + itemTitle + " | score=" + score + " | year=" + itemYear + " | kind=" + itemKind);
+
+      if (score >= 30) {
         scored.push({
           item: item,
           score: score,
@@ -533,26 +351,32 @@ function findBestMatch(tmdbInfo, mediaType) {
     }
 
     if (scored.length === 0) {
-      var bestScore = 0;
+      console.log("[Cinemana] No results passed threshold, using fallback");
+      var bestScore = -999;
       var bestItem = null;
       for (var i = 0; i < allResults.length; i++) {
         var item = allResults[i];
         var itemTitle = item.en_title || item.ar_title || item.videoTitle || item.title || item.name || "";
-        var s = similarityScore(itemTitle, tmdbInfo.title);
+        var s = 0;
+        for (var t = 0; t < tmdbInfo.titles.length; t++) {
+          s = Math.max(s, similarityScore(itemTitle, tmdbInfo.titles[t]));
+        }
+        var itemYear = "";
+        if (item.year) itemYear = String(item.year);
+        if (tmdbInfo.year && itemYear === tmdbInfo.year) s += 20;
         if (s > bestScore) {
           bestScore = s;
           bestItem = item;
         }
       }
       if (bestItem) {
-        console.log("[Cinemana] Fallback match score: " + bestScore);
+        console.log("[Cinemana] Fallback match: " + bestScore);
         return {
           item: bestItem,
           score: bestScore,
           id: String(bestItem.nb || bestItem.id || "").trim()
         };
       }
-      console.log("[Cinemana] No results passed scoring threshold");
       return null;
     }
 
@@ -560,13 +384,13 @@ function findBestMatch(tmdbInfo, mediaType) {
       return b.score - a.score;
     });
 
-    console.log("[Cinemana] Best match score: " + scored[0].score + " -> ID " + scored[0].id);
+    console.log("[Cinemana] Best match: " + scored[0].score + " -> ID " + scored[0].id);
     return scored[0];
   });
 }
 
 // ============================================================
-// Main: Get streams for Nuvio
+// Main: Get streams
 // ============================================================
 function getStreams(tmdbId, mediaType, season, episode) {
   return __async(this, null, function* () {
@@ -584,7 +408,8 @@ function getStreams(tmdbId, mediaType, season, episode) {
         console.log("[Cinemana] Failed to get TMDB info");
         return [];
       }
-      console.log("[Cinemana] TMDB: " + tmdbInfo.title + " (" + tmdbInfo.originalLanguage + ") [" + tmdbInfo.year + "]");
+      console.log("[Cinemana] TMDB titles: " + tmdbInfo.titles.join(" | "));
+      console.log("[Cinemana] TMDB year: " + tmdbInfo.year + " | lang: " + tmdbInfo.originalLanguage);
 
       var match = yield findBestMatch(tmdbInfo, mediaType);
       if (!match || !match.id) {
@@ -601,15 +426,20 @@ function getStreams(tmdbId, mediaType, season, episode) {
         var qualities = yield getTranscodedFiles(cinemanaId);
         var info = yield getVideoInfo(cinemanaId);
         var subs = extractSubtitles(info);
-        console.log("[Cinemana] Movie qualities: " + qualities.length);
+        console.log("[Cinemana] Movie qualities raw: " + qualities.length);
 
         for (var i = 0; i < qualities.length; i++) {
           var q = qualities[i];
           if (!q.videoUrl) continue;
+          var qName = q.resolution || q.name || "";
+          if (!is1080p(qName)) {
+            console.log("[Cinemana] Skipping non-1080p: " + qName);
+            continue;
+          }
           var stream = {
             url: cleanUrl(q.videoUrl),
-            quality: q.resolution || q.name || "Unknown",
-            title: "Cinemana - " + (q.resolution || q.name || "Video")
+            quality: qName,
+            title: "Cinemana 1080p"
           };
           if (subs.length > 0) {
             stream.subtitles = subs;
@@ -649,15 +479,20 @@ function getStreams(tmdbId, mediaType, season, episode) {
         var qualities = yield getTranscodedFiles(epId);
         var info = yield getVideoInfo(epId);
         var subs = extractSubtitles(info);
-        console.log("[Cinemana] Episode qualities: " + qualities.length);
+        console.log("[Cinemana] Episode qualities raw: " + qualities.length);
 
         for (var i = 0; i < qualities.length; i++) {
           var q = qualities[i];
           if (!q.videoUrl) continue;
+          var qName = q.resolution || q.name || "";
+          if (!is1080p(qName)) {
+            console.log("[Cinemana] Skipping non-1080p: " + qName);
+            continue;
+          }
           var stream = {
             url: cleanUrl(q.videoUrl),
-            quality: q.resolution || q.name || "Unknown",
-            title: "Cinemana - " + (q.resolution || q.name || "Video")
+            quality: qName,
+            title: "Cinemana 1080p"
           };
           if (subs.length > 0) {
             stream.subtitles = subs;
@@ -666,7 +501,7 @@ function getStreams(tmdbId, mediaType, season, episode) {
         }
       }
 
-      console.log("[Cinemana] === Done: " + streams.length + " streams in " + (Date.now() - t0) + "ms ===");
+      console.log("[Cinemana] === Done: " + streams.length + " streams (1080p only) in " + (Date.now() - t0) + "ms ===");
       return streams;
     } catch (err) {
       console.log("[Cinemana] FATAL ERROR: " + (err.message || err));
