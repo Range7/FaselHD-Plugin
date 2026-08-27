@@ -18,14 +18,27 @@
     {
       "id": "nuvio-cinemana",
       "name": "Cinemana",
-      "description": "Shabakaty Cinemana - STRICT 1080p ONLY with exact title matching for all languages",
-      "version": "2.0",
+      "description": "Shabakaty Cinemana - STRICT 1080p ONLY with exact title matching",
+      "version": "3.0",
       "author": "He",
       "supportedTypes": ["movie", "tv", "anime"],
       "filename": "providers/cinemana.js",
       "enabled": true,
       "formats": ["mp4"],
       "logo": "https://cinemana.shabakaty.cc/assets/images/logo.png",
+      "contentLanguage": ["ar", "en", "ja", "ko", "es", "fr", "de", "tr", "hi", "zh"]
+    },
+    {
+      "id": "nuvio-cee",
+      "name": "Cee",
+      "description": "Cee - STRICT 1080p ONLY with exact title matching",
+      "version": "3.0",
+      "author": "He",
+      "supportedTypes": ["movie", "tv", "anime"],
+      "filename": "providers/cee.js",
+      "enabled": true,
+      "formats": ["mp4"],
+      "logo": "https://cee.buzz/assets/images/logo.png",
       "contentLanguage": ["ar", "en", "ja", "ko", "es", "fr", "de", "tr", "hi", "zh"]
     },
     {
