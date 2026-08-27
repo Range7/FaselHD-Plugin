@@ -1,6 +1,7 @@
 // Cinemana Scraper for Nuvio Local Scrapers
 // Multi-language exact search based on content origin language
 // React Native compatible version (Hermes-safe, no async/await)
+// API based on: https://github.com/hasanpasha/cinemana
 
 var __async = (__this, __arguments, generator) => {
   return new Promise((resolve, reject) => {
@@ -26,17 +27,10 @@ var __async = (__this, __arguments, generator) => {
 // ============================================================
 // Configuration
 // ============================================================
-var CINEMANA_BASES = [
-  "https://cinemana.shabakaty.com",
-  "https://cinemana.net",
-  "https://cinemana.com"
-];
-var CINEMANA_BASE = CINEMANA_BASES[0];
+var CINEMANA_BASE = "https://cinemana.shabakaty.com/api/android";
 var TMDB_BASE = "https://api.themoviedb.org/3";
 var UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36";
 var FETCH_TIMEOUT = 15e3;
-
-// TMDB API key
 var TMDB_API_KEY = "1865f43a0549ca50d341dd9ab8b29f49";
 
 // ============================================================
@@ -121,7 +115,6 @@ var LANG_SEARCH_MAP = {
   "ca": ["ca", "ar", "en"],
   "gl": ["gl", "ar", "en"],
   "ast": ["ast", "ar", "en"],
-  "wa": ["wa", "ar", "en"],
   "br": ["br", "ar", "en"],
   "co": ["co", "ar", "en"],
   "oc": ["oc", "ar", "en"],
@@ -227,7 +220,6 @@ var LANG_SEARCH_MAP = {
   "enm": ["enm", "ar", "en"],
   "ang": ["ang", "ar", "en"],
   "frr": ["frr", "ar", "en"],
-  "stq": ["stq", "ar", "en"],
   "nds": ["nds", "ar", "en"],
   "pfl": ["pfl", "ar", "en"],
   "bar": ["bar", "ar", "en"],
@@ -333,6 +325,11 @@ function similarityScore(a, b) {
   return 0;
 }
 
+function cleanUrl(url) {
+  if (!url) return "";
+  return url.replace(/\\/g, "");
+}
+
 // ============================================================
 // TMDB: Get title + original language
 // ============================================================
@@ -368,69 +365,45 @@ function getTMDBInfo(tmdbId, mediaType) {
 }
 
 // ============================================================
-// Cinemana: Search by title
+// Cinemana: Search using AdvancedSearch endpoint
 // ============================================================
-function searchCinemana(query, lang) {
+function searchCinemana(query, type) {
   return __async(this, null, function* () {
     var encoded = encodeURIComponent(query);
-    var endpoints = [
-      "/android/searchVideo/videoTitle/" + encoded,
-      "/android/searchVideo/en_title/" + encoded,
-      "/android/searchVideo/ar_title/" + encoded,
-      "/android/search/" + encoded,
-      "/android/videoGroups/lang/" + lang + "/level/0",
-      "/android/videoGroups/lang/" + lang + "/level/1",
-      "/android/videoGroups/lang/" + lang + "/level/2",
-      "/android/videoGroups/lang/" + lang + "/level/3"
-    ];
-
-    for (var b = 0; b < CINEMANA_BASES.length; b++) {
-      var base = CINEMANA_BASES[b];
-      for (var i = 0; i < endpoints.length; i++) {
-        try {
-          var url = base + endpoints[i];
-          var response = yield safeFetch(url, null, 8e3);
-          if (!response.ok) continue;
-          var data = yield response.json();
-          var results = [];
-          if (Array.isArray(data)) {
-            results = data;
-          } else if (data && Array.isArray(data.results)) {
-            results = data.results;
-          } else if (data && Array.isArray(data.content)) {
-            results = data.content;
-          } else if (data && Array.isArray(data.groups)) {
-            for (var g = 0; g < data.groups.length; g++) {
-              if (data.groups[g].content) results = results.concat(data.groups[g].content);
-            }
-          }
-          if (results.length > 0) {
-            console.log("[Cinemana] Search hit on " + url + " -> " + results.length + " results");
-            return results;
-          }
-        } catch (e) {
-          // silent fail per endpoint
-        }
+    var url = CINEMANA_BASE + "/AdvancedSearch?videoTitle=" + encoded + "&type=" + type;
+    try {
+      var response = yield safeFetch(url, null, 10e3);
+      if (!response.ok) {
+        console.log("[Cinemana] Search returned " + response.status);
+        return [];
       }
+      var data = yield response.json();
+      if (Array.isArray(data)) {
+        console.log("[Cinemana] Search found " + data.length + " results");
+        return data;
+      }
+      return [];
+    } catch (e) {
+      console.log("[Cinemana] Search error: " + e.message);
+      return [];
     }
-    return [];
   });
 }
 
 // ============================================================
-// Cinemana: Get video details
+// Cinemana: Get video info (includes subtitles)
 // ============================================================
 function getVideoInfo(cinemanaId) {
   return __async(this, null, function* () {
-    for (var b = 0; b < CINEMANA_BASES.length; b++) {
-      var url = CINEMANA_BASES[b] + "/android/allVideoInfo/id/" + cinemanaId;
-      try {
-        var response = yield safeFetch(url, null, 8e3);
-        if (!response.ok) continue;
-        return yield response.json();
-      } catch (e) {}
+    var url = CINEMANA_BASE + "/allVideoInfo/id/" + cinemanaId;
+    try {
+      var response = yield safeFetch(url, null, 10e3);
+      if (!response.ok) return null;
+      return yield response.json();
+    } catch (e) {
+      console.log("[Cinemana] Video info error: " + e.message);
+      return null;
     }
-    return null;
   });
 }
 
@@ -439,16 +412,16 @@ function getVideoInfo(cinemanaId) {
 // ============================================================
 function getTranscodedFiles(cinemanaId) {
   return __async(this, null, function* () {
-    for (var b = 0; b < CINEMANA_BASES.length; b++) {
-      var url = CINEMANA_BASES[b] + "/android/transcoddedFiles/id/" + cinemanaId;
-      try {
-        var response = yield safeFetch(url, null, 8e3);
-        if (!response.ok) continue;
-        var data = yield response.json();
-        return Array.isArray(data) ? data : [];
-      } catch (e) {}
+    var url = CINEMANA_BASE + "/transcoddedFiles/id/" + cinemanaId;
+    try {
+      var response = yield safeFetch(url, null, 10e3);
+      if (!response.ok) return [];
+      var data = yield response.json();
+      return Array.isArray(data) ? data : [];
+    } catch (e) {
+      console.log("[Cinemana] Transcoded files error: " + e.message);
+      return [];
     }
-    return [];
   });
 }
 
@@ -457,55 +430,45 @@ function getTranscodedFiles(cinemanaId) {
 // ============================================================
 function getSeriesEpisodes(seriesId) {
   return __async(this, null, function* () {
-    for (var b = 0; b < CINEMANA_BASES.length; b++) {
-      var url = CINEMANA_BASES[b] + "/android/videoSeason/id/" + seriesId;
-      try {
-        var response = yield safeFetch(url, null, 8e3);
-        if (!response.ok) continue;
-        var data = yield response.json();
-        return Array.isArray(data) ? data : [];
-      } catch (e) {}
+    var url = CINEMANA_BASE + "/videoSeason/id/" + seriesId;
+    try {
+      var response = yield safeFetch(url, null, 10e3);
+      if (!response.ok) return [];
+      var data = yield response.json();
+      return Array.isArray(data) ? data : [];
+    } catch (e) {
+      console.log("[Cinemana] Series episodes error: " + e.message);
+      return [];
     }
-    return [];
   });
 }
 
 // ============================================================
-// Cinemana: Get subtitles
+// Extract subtitles from video info
 // ============================================================
-function getSubtitles(cinemanaId) {
-  return __async(this, null, function* () {
-    for (var b = 0; b < CINEMANA_BASES.length; b++) {
-      var url = CINEMANA_BASES[b] + "/android/translationFiles/id/" + cinemanaId;
-      try {
-        var response = yield safeFetch(url, null, 8e3);
-        if (!response.ok) continue;
-        var data = yield response.json();
-        var tracks = Array.isArray(data.translations) ? data.translations : [];
-        var out = [];
-        for (var i = 0; i < tracks.length; i++) {
-          var t = tracks[i];
-          if (t && t.file && !/defaultImages\/loading\.gif/i.test(t.file)) {
-            out.push({
-              url: t.file,
-              lang: (t.type || t.name || "sub").toLowerCase(),
-              label: t.name || t.type || "Subtitle"
-            });
-          }
-        }
-        return out;
-      } catch (e) {}
+function extractSubtitles(videoInfo) {
+  var out = [];
+  if (!videoInfo || !videoInfo.translations) return out;
+  var tracks = videoInfo.translations;
+  for (var i = 0; i < tracks.length; i++) {
+    var t = tracks[i];
+    if (t && t.file) {
+      out.push({
+        url: cleanUrl(t.file),
+        lang: (t.name || t.type || "sub").toLowerCase(),
+        label: t.name || t.type || "Subtitle"
+      });
     }
-    return [];
-  });
+  }
+  return out;
 }
 
 // ============================================================
 // Find best match
 // ============================================================
-function findBestMatch(tmdbInfo, mediaType, season, episode) {
+function findBestMatch(tmdbInfo, mediaType) {
   return __async(this, null, function* () {
-    var searchLangs = getSearchLanguages(tmdbInfo.originalLanguage);
+    var searchType = mediaType === "movie" ? "movie" : "series";
     var allResults = [];
     var queries = [];
 
@@ -520,14 +483,12 @@ function findBestMatch(tmdbInfo, mediaType, season, episode) {
     }
 
     for (var q = 0; q < queries.length; q++) {
-      for (var l = 0; l < searchLangs.length; l++) {
-        try {
-          var results = yield searchCinemana(queries[q], searchLangs[l]);
-          for (var r = 0; r < results.length; r++) {
-            allResults.push(results[r]);
-          }
-        } catch (e) {}
-      }
+      try {
+        var results = yield searchCinemana(queries[q], searchType);
+        for (var r = 0; r < results.length; r++) {
+          allResults.push(results[r]);
+        }
+      } catch (e) {}
     }
 
     if (allResults.length === 0) {
@@ -548,9 +509,8 @@ function findBestMatch(tmdbInfo, mediaType, season, episode) {
       var itemYear = "";
       if (item.year) itemYear = String(item.year);
       else if (item.createdate) itemYear = String(item.createdate).substring(0, 4);
-      else if (item.published) itemYear = String(item.published).substring(0, 4);
 
-      var isItemSeries = itemKind === "2" || itemKind === "2";
+      var isItemSeries = itemKind === "2";
       if (isSeries !== isItemSeries) continue;
 
       var score = 0;
@@ -573,7 +533,6 @@ function findBestMatch(tmdbInfo, mediaType, season, episode) {
     }
 
     if (scored.length === 0) {
-      // Fallback: return highest score even if below threshold
       var bestScore = 0;
       var bestItem = null;
       for (var i = 0; i < allResults.length; i++) {
@@ -627,7 +586,7 @@ function getStreams(tmdbId, mediaType, season, episode) {
       }
       console.log("[Cinemana] TMDB: " + tmdbInfo.title + " (" + tmdbInfo.originalLanguage + ") [" + tmdbInfo.year + "]");
 
-      var match = yield findBestMatch(tmdbInfo, mediaType, season, episode);
+      var match = yield findBestMatch(tmdbInfo, mediaType);
       if (!match || !match.id) {
         console.log("[Cinemana] No match found on Cinemana");
         return [];
@@ -640,16 +599,17 @@ function getStreams(tmdbId, mediaType, season, episode) {
 
       if (mediaType === "movie") {
         var qualities = yield getTranscodedFiles(cinemanaId);
-        var subs = yield getSubtitles(cinemanaId);
+        var info = yield getVideoInfo(cinemanaId);
+        var subs = extractSubtitles(info);
         console.log("[Cinemana] Movie qualities: " + qualities.length);
 
         for (var i = 0; i < qualities.length; i++) {
           var q = qualities[i];
           if (!q.videoUrl) continue;
           var stream = {
-            url: q.videoUrl,
-            quality: q.name || q.resolution || "Unknown",
-            title: "Cinemana - " + (q.name || q.resolution || "Video")
+            url: cleanUrl(q.videoUrl),
+            quality: q.resolution || q.name || "Unknown",
+            title: "Cinemana - " + (q.resolution || q.name || "Video")
           };
           if (subs.length > 0) {
             stream.subtitles = subs;
@@ -687,16 +647,17 @@ function getStreams(tmdbId, mediaType, season, episode) {
 
         console.log("[Cinemana] Episode ID: " + epId);
         var qualities = yield getTranscodedFiles(epId);
-        var subs = yield getSubtitles(epId);
+        var info = yield getVideoInfo(epId);
+        var subs = extractSubtitles(info);
         console.log("[Cinemana] Episode qualities: " + qualities.length);
 
         for (var i = 0; i < qualities.length; i++) {
           var q = qualities[i];
           if (!q.videoUrl) continue;
           var stream = {
-            url: q.videoUrl,
-            quality: q.name || q.resolution || "Unknown",
-            title: "Cinemana - " + (q.name || q.resolution || "Video")
+            url: cleanUrl(q.videoUrl),
+            quality: q.resolution || q.name || "Unknown",
+            title: "Cinemana - " + (q.resolution || q.name || "Video")
           };
           if (subs.length > 0) {
             stream.subtitles = subs;
