@@ -18,15 +18,15 @@
     {
       "id": "nuvio-cinemana",
       "name": "Cinemana",
-      "description": "Shabakaty Cinemana - Arabic movies and TV series with direct MP4 streaming",
-      "version": "1.0",
+      "description": "Shabakaty Cinemana - STRICT 1080p ONLY with exact title matching for all languages",
+      "version": "2.0",
       "author": "He",
-      "supportedTypes": ["movie", "tv"],
+      "supportedTypes": ["movie", "tv", "anime"],
       "filename": "providers/cinemana.js",
       "enabled": true,
       "formats": ["mp4"],
       "logo": "https://cinemana.shabakaty.cc/assets/images/logo.png",
-      "contentLanguage": ["ar", "en"]
+      "contentLanguage": ["ar", "en", "ja", "ko", "es", "fr", "de", "tr", "hi", "zh"]
     },
     {
       "id": "nuvio-moviebox",
