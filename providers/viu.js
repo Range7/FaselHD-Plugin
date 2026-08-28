@@ -1,4 +1,4 @@
-// providers/viu.js - Fully Tested & Verified Viu Provider for Nuvio
+// providers/viu.js - Fixed Viu Provider with Arabic Search & Correct API Endpoints
 
 const VIU_API_BASE = 'https://api.viu.com/ott/v1';
 
@@ -9,27 +9,26 @@ const HEADERS = {
   'Accept': 'application/json, text/plain, */*'
 };
 
-// الإعدادات الدقيقة لمنطقة الشرق الأوسط (المأخوذة من كود Cloudstream re-3arabi)
 const DEFAULT_PARAMS = {
   platform_flag_label: 'web',
-  area_id: '4',         // المنطقة العربية
-  country_code: 'IQ',   // كود العراق/الشرق الأوسط
-  language_flag_id: '3', // اللغة العربية
+  area_id: '4',          // الشرق الأوسط
+  country_code: 'IQ',    // العراق / الدول العربية
+  language_flag_id: '3',  // اللغة العربية (1 للإنجليزية)
   platform_type: 'WEB',
   app_ver: '2.0.0'
 };
 
 /**
- * دالة إرسال الطلبات لـ Viu API مع المعالجة الآمنة
+ * دالة إرسال الطلبات لـ API Viu
  */
-async function fetchViuApi(endpoint, params = {}) {
+async function fetchViu(endpoint, params = {}) {
   try {
-    const queryParams = { ...DEFAULT_PARAMS, ...params };
-    const queryString = Object.keys(queryParams)
-      .map(k => `${encodeURIComponent(k)}=${encodeURIComponent(queryParams[k])}`)
+    const allParams = { ...DEFAULT_PARAMS, ...params };
+    const queryStr = Object.keys(allParams)
+      .map(k => `${encodeURIComponent(k)}=${encodeURIComponent(allParams[k])}`)
       .join('&');
 
-    const response = await fetch(`${VIU_API_BASE}${endpoint}?${queryString}`, {
+    const response = await fetch(`${VIU_API_BASE}${endpoint}?${queryStr}`, {
       method: 'GET',
       headers: HEADERS
     });
@@ -42,38 +41,64 @@ async function fetchViuApi(endpoint, params = {}) {
 }
 
 /**
- * تنظيف نصوص البحث من الرموز والتشكيل
+ * تنظيف نصوص البحث العربية والإنجليزية
  */
-function cleanQuery(text) {
-  if (!text) return '';
-  return text
-    .replace(/[\(\)\[\]\:\-\_]/g, ' ')
-    .replace(/season\s*\d+/gi, '')
+function cleanArabicTitle(title) {
+  if (!title) return '';
+  return title
+    // إزالة الموسم والحلقة
     .replace(/الموسم\s*\d+/gi, '')
+    .replace(/الجزء\s*\d+/gi, '')
+    .replace(/season\s*\d+/gi, '')
+    .replace(/part\s*\d+/gi, '')
     .replace(/حلقة\s*\d+/gi, '')
+    .replace(/ep\w*\s*\d+/gi, '')
+    // إزالة التشكيل العربي
+    .replace(/[\u064B-\u0652]/g, '')
+    // إزالة الرموز
+    .replace(/[\(\)\[\]\:\-\_\.\,\!]/g, ' ')
+    .replace(/\s+/g, ' ')
     .trim();
 }
 
 /**
- * البحث في Viu API
+ * البحث بـ Viu API باستخدام الـ Endpoints الصحيحة
  */
 async function searchViu(keyword) {
-  const query = cleanQuery(keyword);
-  if (!query) return [];
+  const q = cleanArabicTitle(keyword);
+  if (!q) return [];
 
-  const res = await fetchViuApi('/search', { keyword: query, limit: '10' });
-  return res?.data?.products || [];
+  // 1. محاولة البحث بـ /product/search
+  let res = await fetchViu('/product/search', { keyword: q, limit: '10' });
+  let products = res?.data?.products || [];
+
+  // 2. إذا لم يجد، محاولة البحث بـ /all-products
+  if (!products || products.length === 0) {
+    res = await fetchViu('/all-products', { keyword: q, limit: '10' });
+    products = res?.data?.products || [];
+  }
+
+  // 3. إذا لم يجد، محاولة البحث بأول كلمتين من العنوان فقط
+  if ((!products || products.length === 0) && q.includes(' ')) {
+    const shortQuery = q.split(' ').slice(0, 2).join(' ');
+    res = await fetchViu('/product/search', { keyword: shortQuery, limit: '10' });
+    products = res?.data?.products || [];
+  }
+
+  return products;
 }
 
 /**
- * استخراج ID الحلقة للمسلسلات
+ * جلب product_id الخاص بالحلقة المطلوب عرضها
  */
-async function getEpisodeProductId(seriesProductId, epNum) {
-  const res = await fetchViuApi('/product/detail', { product_id: seriesProductId });
-  const episodes = res?.data?.product?.episodes || [];
+async function getEpisodeId(seriesProductId, epNum) {
+  const res = await fetchViu('/product/detail', { product_id: seriesProductId });
+  const product = res?.data?.product;
+  const episodes = product?.episodes || [];
 
   if (!episodes || episodes.length === 0) return seriesProductId;
 
+  // المطابقة حسب رقم الحلقة
   const target = episodes.find(
     e => parseInt(e.number || e.episode_num || 0) === parseInt(epNum || 1)
   );
@@ -82,88 +107,82 @@ async function getEpisodeProductId(seriesProductId, epNum) {
 }
 
 /**
- * معالج استخراج رابط M3U8 وتجاوز مشكلة (Object / String)
+ * استخراج رابط M3U8 آمن
  */
-function parseStreamUrl(payload) {
-  if (!payload) return null;
+function extractM3u8Url(data) {
+  if (!data) return null;
 
-  let raw = 
-    payload.stream?.url || 
-    payload.current_product?.stream_url || 
-    payload.product?.stream_url || 
-    payload.distribute_url;
+  let url =
+    data.stream?.url ||
+    data.current_product?.stream_url ||
+    data.product?.stream_url ||
+    data.distribute_url;
 
-  if (!raw) return null;
-
-  // حل مشكلة Object بدلاً من String
-  if (typeof raw === 'object') {
-    return raw.url || raw.m3u8 || raw.src || null;
+  if (typeof url === 'object' && url !== null) {
+    url = url.url || url.m3u8 || url.src || null;
   }
 
-  if (typeof raw === 'string' && raw.startsWith('http')) {
-    return raw;
+  if (typeof url === 'string' && url.startsWith('http')) {
+    return url;
   }
 
   return null;
 }
 
 /**
- * الدالة المطلوبة بـ Nuvio Engine
+ * الدالة الرئيسية المستدعاة بـ Nuvio Engine
  */
-async function getStreams(mediaInfo, arg2, arg3, arg4, arg5) {
+async function getStreams(arg1, arg2, arg3, arg4, arg5) {
   try {
     let title = '';
     let origTitle = '';
     let type = 'movie';
     let episode = 1;
 
-    // استخراج الحقول بغض النظر عن طريقة تمرير Nuvio للمدخلات
-    if (typeof mediaInfo === 'object' && mediaInfo !== null) {
-      title = mediaInfo.title || mediaInfo.name || '';
-      origTitle = mediaInfo.origTitle || mediaInfo.original_title || mediaInfo.originalTitle || '';
-      type = mediaInfo.type || mediaInfo.mediaType || 'movie';
-      episode = mediaInfo.episode || mediaInfo.episodeNumber || 1;
+    // استخراج بيانات الفلم / المسلسل
+    if (typeof arg1 === 'object' && arg1 !== null) {
+      title = arg1.title || arg1.name || '';
+      origTitle = arg1.origTitle || arg1.original_title || arg1.originalTitle || '';
+      type = arg1.type || arg1.mediaType || 'movie';
+      episode = arg1.episode || arg1.episodeNumber || 1;
     } else {
       type = arg2 || 'movie';
       episode = arg4 || 1;
-      title = arg5 || mediaInfo || '';
+      title = arg5 || arg1 || '';
     }
 
-    if (!title && !origTitle) return [];
-
-    // 1. تجربة البحث بالاسم العربي/الرئيسي
+    // 1. تجربة البحث بالاسم العربي
     let searchResults = await searchViu(title);
 
-    // 2. تجربة البحث بالاسم الأصلي في حال عدم وجود نتائج
+    // 2. تجربة البحث بالاسم الأصلي/الإنجليزي إذا فشل العربي
     if ((!searchResults || searchResults.length === 0) && origTitle && origTitle !== title) {
       searchResults = await searchViu(origTitle);
     }
 
     if (!searchResults || searchResults.length === 0) return [];
 
-    const matchedItem = searchResults[0];
-    let targetProductId = matchedItem.product_id;
+    const matched = searchResults[0];
+    let targetProductId = matched.product_id;
 
-    // 3. تحديد الحلقة للمسلسلات
-    if (type === 'tv' || type === 'series' || matchedItem.is_series === '1') {
-      targetProductId = await getEpisodeProductId(targetProductId, episode);
+    // 3. مطابقة رقم الحلقة للمسلسلات
+    if (type === 'tv' || type === 'series' || matched.is_series === '1') {
+      targetProductId = await getEpisodeId(targetProductId, episode);
     }
 
-    // 4. استخراج بيانات البث
-    const streamRes = await fetchViuApi('/playlist/detail', { product_id: targetProductId });
-    const finalM3u8Url = parseStreamUrl(streamRes?.data);
+    // 4. استخراج رابط التشغيل
+    const streamRes = await fetchViu('/playlist/detail', { product_id: targetProductId });
+    const m3u8Url = extractM3u8Url(streamRes?.data);
 
-    if (!finalM3u8Url) return [];
+    if (!m3u8Url) return [];
 
-    // إرجاع النتيجة بالصيغة المقبولة تماماً بـ Nuvio
     return [
       {
-        name: 'Viu HD',
+        name: 'Viu',
         server: 'Viu Official',
-        url: finalM3u8Url,
+        url: m3u8Url,
         quality: 'Auto',
         format: 'm3u8',
-        type: 'hls',
+        type: 'm3u8',
         headers: {
           'User-Agent': HEADERS['User-Agent'],
           'Referer': 'https://www.viu.com/',
@@ -176,7 +195,6 @@ async function getStreams(mediaInfo, arg2, arg3, arg4, arg5) {
   }
 }
 
-// التصدير القياسي المتوافق مع Nuvio
 module.exports = {
   id: 'nuvio-viu',
   name: 'Viu',
