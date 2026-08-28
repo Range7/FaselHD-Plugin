@@ -1,137 +1,168 @@
 const axios = require('axios');
 
-const VIU_API_BASE = 'https://api.viu.com/ott/v1';
-
-const HEADERS = {
-  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-  'Origin': 'https://www.viu.com',
-  'Referer': 'https://www.viu.com/'
-};
-
-const COMMON_PARAMS = {
-  platform_flag_label: 'web',
-  area_id: '4',         // منطقة الشرق الأوسط
-  language_flag_id: '3', // اللغة العربية
-  app_ver: '2.0.0'
-};
-
 class ViuProvider {
-  // 1. جلب المحتوى الرئيسي (Home / Catalog)
-  async getCatalog(type = 'series', page = 1) {
-    try {
-      const categoryId = type === 'series' ? '1' : '2';
-      const response = await axios.get(`${VIU_API_BASE}/all-products`, {
-        params: {
-          ...COMMON_PARAMS,
-          category_id: categoryId,
-          limit: 20,
-          page: page
-        },
-        headers: HEADERS
-      });
+  constructor() {
+    this.id = 'nuvio-viu';
+    this.name = 'Viu';
+    this.baseUrl = 'https://www.viu.com';
+    this.apiUrl = 'https://api.viu.com/ott/v1';
+    
+    // Headers المعتمدة من Viu API في Cloudstream
+    this.headers = {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+      'Origin': 'https://www.viu.com',
+      'Referer': 'https://www.viu.com/',
+      'Accept': 'application/json, text/plain, */*'
+    };
 
-      const products = response.data?.data?.products || [];
-      return products.map(item => ({
-        id: item.product_id.toString(),
-        title: item.title,
-        poster: item.cover_image_url || item.image_url,
-        type: type,
-        description: item.synopsis || ''
-      }));
+    // الإعدادات الخاصة بمنطقة الشرق الأوسط (MEA - Arabic)
+    this.defaultParams = {
+      platform_flag_label: 'web',
+      area_id: '4',         // كود المنطقة العربية
+      language_flag_id: '3', // اللغة العربية
+      app_ver: '2.0.0'
+    };
+  }
+
+  /**
+   * الدالة الرئيسية المطلوبة في Nuvio لاستخراج السيرفرات وروابط المشاهدة
+   * @param {Object} mediaInfo - تحتوي على بيانات العنوان، النوع، الموسم والحلقة
+   */
+  async getStream(mediaInfo) {
+    try {
+      const { title, year, season, episode, type } = mediaInfo;
+      const cleanTitle = this.cleanSearchQuery(title);
+
+      // 1. البحث عن المحتوى في Viu
+      const searchResults = await this.searchViu(cleanTitle);
+      if (!searchResults || searchResults.length === 0) {
+        console.log(`[Viu] لم يتم العثور على نتائج للعنوان: ${cleanTitle}`);
+        return [];
+      }
+
+      // اختيار أفضل نتيجة مطابقة
+      const targetItem = searchResults[0];
+      let targetProductId = targetItem.product_id;
+
+      // 2. إذا كان نوع المحتوى مسلسل، نقوم بجلب قائمة الحلقات واختيار الحلقة المطلوبة
+      if (type === 'tv' || type === 'series' || targetItem.is_series === '1') {
+        const episodeProductId = await this.getEpisodeProductId(targetProductId, episode);
+        if (episodeProductId) {
+          targetProductId = episodeProductId;
+        }
+      }
+
+      // 3. استخراج روابط M3U8 للبث
+      const streams = await this.extractStreams(targetProductId);
+      return streams;
+
     } catch (error) {
-      console.error('Error fetching Viu catalog:', error.message);
+      console.error('[Viu Provider Error]:', error.message);
       return [];
     }
   }
 
-  // 2. البحث (Search)
-  async search(query) {
+  /**
+   * البحث عن فيلم أو مسلسل عبر API Viu
+   */
+  async searchViu(query) {
     try {
-      const response = await axios.get(`${VIU_API_BASE}/search`, {
+      const response = await axios.get(`${this.apiUrl}/search`, {
         params: {
-          ...COMMON_PARAMS,
+          ...this.defaultParams,
           keyword: query,
-          limit: 20
+          limit: 10
         },
-        headers: HEADERS
+        headers: this.headers
       });
 
-      const products = response.data?.data?.products || [];
-      return products.map(item => ({
-        id: item.product_id.toString(),
-        title: item.title,
-        poster: item.cover_image_url || item.image_url,
-        type: item.is_series === '1' ? 'series' : 'movie'
-      }));
-    } catch (error) {
-      console.error('Error searching Viu:', error.message);
+      return response.data?.data?.products || [];
+    } catch (err) {
+      console.error('[Viu Search Error]:', err.message);
       return [];
     }
   }
 
-  // 3. جلب التفاصيل والمواسم/الحلقات (Details)
-  async getDetails(productId) {
+  /**
+   * جلب ID الحلقة المطلوبة داخل المسلسل
+   */
+  async getEpisodeProductId(seriesProductId, episodeNumber) {
     try {
-      const response = await axios.get(`${VIU_API_BASE}/product/detail`, {
+      const response = await axios.get(`${this.apiUrl}/product/detail`, {
         params: {
-          ...COMMON_PARAMS,
-          product_id: productId
+          ...this.defaultParams,
+          product_id: seriesProductId
         },
-        headers: HEADERS
+        headers: this.headers
       });
 
-      const data = response.data?.data?.product;
-      if (!data) return null;
+      const episodes = response.data?.data?.product?.episodes || [];
+      if (episodes.length === 0) return seriesProductId;
 
-      return {
-        id: data.product_id.toString(),
-        title: data.title,
-        poster: data.cover_image_url || data.image_url,
-        description: data.synopsis || '',
-        year: data.year || '',
-        episodes: (data.episodes || []).map(ep => ({
-          id: ep.product_id.toString(),
-          title: ep.title || `الحلقة ${ep.number}`,
-          episodeNumber: ep.number
-        }))
-      };
-    } catch (error) {
-      console.error('Error fetching details:', error.message);
-      return null;
+      // البحث عن رقم الحلقة المطابق
+      const targetEp = episodes.find(ep => parseInt(ep.number || ep.episode_num) === parseInt(episodeNumber));
+      return targetEp ? targetEp.product_id : episodes[0].product_id;
+
+    } catch (err) {
+      console.error('[Viu Episode Fetch Error]:', err.message);
+      return seriesProductId;
     }
   }
 
-  // 4. استخراج روابط البث والـ Extractor (Streams / M3U8)
-  async getStreams(productId) {
+  /**
+   * استخراج روابط التشغيل M3U8 والجودات
+   */
+  async extractStreams(productId) {
     try {
-      const response = await axios.get(`${VIU_API_BASE}/playlist/detail`, {
+      const response = await axios.get(`${this.apiUrl}/playlist/detail`, {
         params: {
-          ...COMMON_PARAMS,
+          ...this.defaultParams,
           product_id: productId
         },
-        headers: HEADERS
+        headers: this.headers
       });
 
-      const streamData = response.data?.data;
-      if (!streamData) return [];
+      const data = response.data?.data;
+      if (!data) return [];
 
       const streams = [];
 
-      // رابط الـ HLS الرئيسي
-      if (streamData.stream && streamData.stream.url) {
+      // استخراج رابط البث المباشر (HLS / M3U8)
+      const streamUrl = data.stream?.url || data.current_product?.stream_url;
+
+      if (streamUrl) {
         streams.push({
-          name: 'Viu HD (Auto M3U8)',
-          url: streamData.stream.url,
+          server: 'Viu Official',
+          name: 'Viu Auto Quality (M3U8)',
+          url: streamUrl,
           quality: 'auto',
-          format: 'hls'
+          format: 'm3u8',
+          headers: {
+            'User-Agent': this.headers['User-Agent'],
+            'Referer': this.headers['Referer'],
+            'Origin': this.headers['Origin']
+          }
         });
       }
 
       return streams;
-    } catch (error) {
-      console.error('Error fetching stream links:', error.message);
+
+    } catch (err) {
+      console.error('[Viu Stream Extraction Error]:', err.message);
       return [];
     }
+  }
+
+  /**
+   * تنظيف نص البحث من الرموز الزائدة لضمان دقة البحث
+   */
+  cleanSearchQuery(query) {
+    if (!query) return '';
+    return query
+      .replace(/[\(\)\[\]]/g, '')
+      .replace(/Season \d+/i, '')
+      .replace(/الموسم \d+/g, '')
+      .trim();
   }
 }
 
