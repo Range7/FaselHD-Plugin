@@ -1,17 +1,13 @@
-// providers/cimanow.js - Certified & Fully Audited CimaNow Provider for Nuvio
+// providers/cimanow.js - Fixes WebP Codec Error & Duplicates for Nuvio
 
 const TMDB_API_KEY = '1865f43a0549ca50d341dd9ab8b29f49';
 const CIMANOW_BASE = 'https://cimanow.cc';
 
 const HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-  'Accept-Language': 'ar,en-US;q=0.7,en;q=0.3'
+  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
 };
 
-/**
- * دالة جلب النص آمنة مع معالجة الأخطاء
- */
 async function fetchText(url) {
   if (!url || typeof url !== 'string') return '';
   try {
@@ -23,9 +19,6 @@ async function fetchText(url) {
   }
 }
 
-/**
- * دالة جلب JSON من TMDB
- */
 async function fetchJson(url) {
   if (!url || typeof url !== 'string') return null;
   try {
@@ -38,16 +31,11 @@ async function fetchJson(url) {
   }
 }
 
-/**
- * جلب العناوين المترجمة رسمياً من TMDB
- */
 async function getTmdbTitles(tmdbId, mediaType) {
   if (!tmdbId) return [];
   const titles = [];
   try {
     const endpoint = (mediaType === 'tv' || mediaType === 'series') ? 'tv' : 'movie';
-    
-    // 1. قائمة الترجمات المباشرة
     const transUrl = `https://api.themoviedb.org/3/${endpoint}/${tmdbId}/translations?api_key=${TMDB_API_KEY}`;
     const transData = await fetchJson(transUrl);
     if (transData?.translations && Array.isArray(transData.translations)) {
@@ -56,29 +44,14 @@ async function getTmdbTitles(tmdbId, mediaType) {
       if (arItem?.data?.title) titles.push(arItem.data.title);
     }
 
-    // 2. العنوان المباشر بلغة ar-SA
     const arUrl = `https://api.themoviedb.org/3/${endpoint}/${tmdbId}?api_key=${TMDB_API_KEY}&language=ar-SA`;
     const arData = await fetchJson(arUrl);
     if (arData?.name) titles.push(arData.name);
     if (arData?.title) titles.push(arData.title);
-
-    // 3. العناوين الإنكليزية والأصلية
-    const enUrl = `https://api.themoviedb.org/3/${endpoint}/${tmdbId}?api_key=${TMDB_API_KEY}&language=en-US`;
-    const enData = await fetchJson(enUrl);
-    if (enData?.name) titles.push(enData.name);
-    if (enData?.title) titles.push(enData.title);
-    if (enData?.original_name) titles.push(enData.original_name);
-    if (enData?.original_title) titles.push(enData.original_title);
-
-  } catch (e) {
-    // catch-all safety
-  }
+  } catch (e) {}
   return [...new Set(titles.filter(t => typeof t === 'string' && t.trim().length > 0))];
 }
 
-/**
- * تنظيف نصوص البحث من الرموز والكلمات الإضافية
- */
 function cleanQuery(str) {
   if (!str || typeof str !== 'string') return '';
   return str
@@ -92,9 +65,6 @@ function cleanQuery(str) {
     .trim();
 }
 
-/**
- * تحويل الروابط النسبية إلى كاملة
- */
 function resolveUrl(relativeUrl, baseUrl) {
   if (!relativeUrl || typeof relativeUrl !== 'string') return '';
   if (relativeUrl.startsWith('http://') || relativeUrl.startsWith('https://')) return relativeUrl;
@@ -110,9 +80,6 @@ function resolveUrl(relativeUrl, baseUrl) {
   return `${baseUrl}/${relativeUrl}`;
 }
 
-/**
- * البحث في سيما ناو بدعم الاقتباسات المزدوجة والفردية والفلترة الآمنة
- */
 async function searchCimaNow(keyword) {
   const q = cleanQuery(keyword);
   if (!q) return [];
@@ -128,7 +95,6 @@ async function searchCimaNow(keyword) {
 
   while ((match = linkRegex.exec(html)) !== null) {
     if (++loopSafety > 60) break;
-
     const rawLink = match[1];
     const content = match[2];
     const fullLink = resolveUrl(rawLink, CIMANOW_BASE);
@@ -145,9 +111,7 @@ async function searchCimaNow(keyword) {
       continue;
     }
 
-    let titleMatch = content.match(/<h3>([^<]+)<\/h3>/i) ||
-                     content.match(/title=["']([^"']+)["']/i) ||
-                     content.match(/alt=["']([^"']+)["']/i);
+    let titleMatch = content.match(/<h3>([^<]+)<\/h3>/i) || content.match(/title=["']([^"']+)["']/i);
     let titleText = titleMatch ? titleMatch[1] : content.replace(/<[^>]+>/g, '').trim();
 
     if (fullLink && !results.some(r => r.link === fullLink)) {
@@ -158,9 +122,6 @@ async function searchCimaNow(keyword) {
   return results;
 }
 
-/**
- * استخراج صفحة الحلقة بدقة للمسلسلات
- */
 async function getEpisodePageUrl(seriesPageUrl, episodeNum) {
   const html = await fetchText(seriesPageUrl);
   if (!html) return seriesPageUrl;
@@ -176,7 +137,6 @@ async function getEpisodePageUrl(seriesPageUrl, episodeNum) {
 
   while ((match = linkRegex.exec(html)) !== null) {
     if (++loopSafety > 80) break;
-
     const rawLink = match[1];
     const text = match[2].replace(/<[^>]+>/g, '').trim();
     const fullLink = resolveUrl(rawLink, seriesPageUrl);
@@ -187,8 +147,7 @@ async function getEpisodePageUrl(seriesPageUrl, episodeNum) {
       fullLink.includes(`الحلقة-${epStr}`) ||
       fullLink.includes(`الحلقة-${epPadStr}`) ||
       text.includes(`الحلقة ${epStr}`) ||
-      text.includes(`حلقة ${epStr}`) ||
-      text.includes(`الحلقة ${epPadStr}`)
+      text.includes(`حلقة ${epStr}`)
     ) {
       return fullLink;
     }
@@ -202,12 +161,13 @@ async function getEpisodePageUrl(seriesPageUrl, episodeNum) {
 }
 
 /**
- * تفكيك المشغل المضمن للحصول على رابط الفيديو المباشر
+ * استخراج رابط البث المباشر الموثوق فقط (.m3u8 أو .mp4)
+ * يتجاهل تماماً أي صفحة HTML أو صور .webp
  */
 async function resolveEmbedToStream(embedUrl) {
   if (!embedUrl || typeof embedUrl !== 'string' || !embedUrl.startsWith('http')) return null;
 
-  if (embedUrl.includes('.m3u8') || embedUrl.includes('.mp4')) {
+  if (/\.(m3u8|mp4)(\?|$)/i.test(embedUrl)) {
     return {
       url: embedUrl,
       format: embedUrl.includes('.m3u8') ? 'm3u8' : 'mp4'
@@ -217,39 +177,45 @@ async function resolveEmbedToStream(embedUrl) {
   const html = await fetchText(embedUrl);
   if (!html) return null;
 
-  const streamMatch = html.match(/(https?:\/\/[^"'\s]+\.(?:m3u8|mp4)[^"'\s]*)/i) ||
-                      html.match(/file\s*:\s*["']([^"']+)["']/i) ||
-                      html.match(/src\s*:\s*["']([^"']+)["']/i) ||
-                      html.match(/source\s*:\s*["']([^"']+)["']/i);
+  // البحث حصراً عن روابط الفيديو .m3u8 أو .mp4 الداخلي وتجاهل أي صور webp/jpg
+  const videoRegex = /(https?:\/\/[^"'\s\>]+?\.(?:m3u8|mp4)(?:\?[^"'\s\>]*)?)/gi;
+  let match;
+  while ((match = videoRegex.exec(html)) !== null) {
+    const foundUrl = match[1];
+    if (foundUrl && !/\.(webp|jpg|jpeg|png|gif|svg)(\?|$)/i.test(foundUrl)) {
+      return {
+        url: foundUrl,
+        format: foundUrl.includes('.m3u8') ? 'm3u8' : 'mp4'
+      };
+    }
+  }
 
-  if (streamMatch && streamMatch[1]) {
-    const url = streamMatch[1];
-    return {
-      url: url,
-      format: url.includes('.m3u8') ? 'm3u8' : 'mp4'
-    };
+  const fileMatch = html.match(/(?:file|src|source)\s*:\s*["'](https?:\/\/[^"']+)["']/i);
+  if (fileMatch && fileMatch[1]) {
+    const foundUrl = fileMatch[1];
+    if (/\.(m3u8|mp4)(\?|$)/i.test(foundUrl) && !/\.(webp|jpg|png)(\?|$)/i.test(foundUrl)) {
+      return {
+        url: foundUrl,
+        format: foundUrl.includes('.m3u8') ? 'm3u8' : 'mp4'
+      };
+    }
   }
 
   return null;
 }
 
-/**
- * استخراج السيرفرات بالتوازي وبأقصى قدر من التغطية
- */
 async function extractStreamsFromPage(pageUrl) {
   const html = await fetchText(pageUrl);
   if (!html) return [];
 
-  const streams = [];
   const candidateEmbeds = [];
 
-  // 1. استخراج ה-iframes والـ embeds
   const iframeRegex = /<(?:iframe|embed)\s+[^>]*(?:src|data-src|data-lazy-src|data-url)=["']([^"']+)["']/gi;
   let match;
   let loopSafety = 0;
 
   while ((match = iframeRegex.exec(html)) !== null) {
-    if (++loopSafety > 25) break;
+    if (++loopSafety > 20) break;
     let src = match[1];
     if (src.startsWith('//')) src = 'https:' + src;
     if (src.startsWith('http') && !candidateEmbeds.includes(src)) {
@@ -257,11 +223,10 @@ async function extractStreamsFromPage(pageUrl) {
     }
   }
 
-  // 2. استخراج data-attributes الخفيفة لتبويبات السيرفرات
-  const tabRegex = /data-(?:url|embed|src|link|server|stream|player|video)=["']([^"']+)["']/gi;
+  const tabRegex = /data-(?:url|embed|src|link|server|player)=["']([^"']+)["']/gi;
   loopSafety = 0;
   while ((match = tabRegex.exec(html)) !== null) {
-    if (++loopSafety > 25) break;
+    if (++loopSafety > 20) break;
     let src = match[1];
     if (src.startsWith('//')) src = 'https:' + src;
     if (src.startsWith('http') && !candidateEmbeds.includes(src)) {
@@ -269,39 +234,28 @@ async function extractStreamsFromPage(pageUrl) {
     }
   }
 
-  // 3. معالجة أول 5 مشغلات بالتوازي
   const topEmbeds = candidateEmbeds.slice(0, 5);
   const resolvedResults = await Promise.all(topEmbeds.map(url => resolveEmbedToStream(url)));
 
-  for (let i = 0; i < resolvedResults.length; i++) {
-    const res = resolvedResults[i];
-    const embedUrl = topEmbeds[i];
-
-    if (res && res.url) {
-      streams.push({
-        name: res.format === 'm3u8' ? 'CimaNow HD (HLS)' : 'CimaNow Direct (MP4)',
+  const validStreams = [];
+  for (const res of resolvedResults) {
+    if (res && res.url && !validStreams.some(v => v.url === res.url)) {
+      validStreams.push({
+        name: res.format === 'm3u8' ? 'CimaNow 1080p FHD' : 'CimaNow Direct 1080p',
         url: res.url,
         quality: '1080p',
         format: res.format
       });
-    } else if (embedUrl.includes('cimanow') || embedUrl.includes('player') || embedUrl.includes('embed')) {
-      streams.push({
-        name: 'CimaNow Player',
-        url: embedUrl,
-        quality: 'Auto',
-        format: 'm3u8'
-      });
     }
   }
 
-  // 4. استخراج وسوم الفيديو المباشرة
   const videoRegex = /<source\s+[^>]*src=["']([^"']+)["']/gi;
   loopSafety = 0;
   while ((match = videoRegex.exec(html)) !== null) {
-    if (++loopSafety > 15) break;
+    if (++loopSafety > 10) break;
     const src = match[1];
-    if (src && !streams.some(s => s.url === src)) {
-      streams.push({
+    if (src && /\.(m3u8|mp4)(\?|$)/i.test(src) && !validStreams.some(s => s.url === src)) {
+      validStreams.push({
         name: 'CimaNow Fast 1080p',
         url: src,
         quality: '1080p',
@@ -310,12 +264,19 @@ async function extractStreamsFromPage(pageUrl) {
     }
   }
 
-  return streams;
+  // تصفية وحذف التكرار
+  const uniqueStreams = [];
+  const seenUrls = new Set();
+  for (const st of validStreams) {
+    if (!seenUrls.has(st.url)) {
+      seenUrls.add(st.url);
+      uniqueStreams.push(st);
+    }
+  }
+
+  return uniqueStreams;
 }
 
-/**
- * الدالة الرئيسية المستدعاة بداخل Nuvio Engine
- */
 async function getStreams(arg1, arg2, arg3, arg4, arg5) {
   try {
     let tmdbId = '';
@@ -381,7 +342,7 @@ async function getStreams(arg1, arg2, arg3, arg4, arg5) {
       link: s.url,
       file: s.url,
       streamUrl: s.url,
-      quality: s.quality || '1080p',
+      quality: '1080p',
       format: s.format || 'm3u8',
       type: s.format === 'm3u8' ? 'hls' : 'direct'
     }));
