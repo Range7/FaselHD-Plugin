@@ -1,6 +1,6 @@
 // Cinemana Scraper for Nuvio Local Scrapers
-// Multi-language EXACT literal search | 1080p only | Verified Dub/Sub
-// Fixed: Japanese/Chinese/Korean title support
+// Multi-language EXACT literal search | 1080p preferred | Verified Dub/Sub
+// Anime-friendly: lower thresholds, quality fallback
 // React Native compatible version (Hermes-safe, no async/await)
 
 var __async = (__this, __arguments, generator) => {
@@ -43,7 +43,7 @@ function safeFetch(url, options, timeout) {
 }
 
 // ─── Title Normalization ─────────────────────────────────
-// FIXED: Preserves ALL language characters (Japanese, Chinese, Korean, etc.)
+// Preserves ALL language characters (Japanese, Chinese, Korean, Arabic, etc.)
 function normalizeTitle(title) {
   if (!title) return "";
   return title.toLowerCase()
@@ -101,7 +101,7 @@ function strictMatchScore(resultTitle, tmdbTitle) {
     }
   }
 
-  // Word overlap (for space-separated languages like English/Arabic)
+  // Word overlap
   var resultWords = normResult.split(" ").filter(function(w) { return w.length > 2; });
   var tmdbWords = normTmdb.split(" ").filter(function(w) { return w.length > 2; });
 
@@ -127,7 +127,6 @@ function getTMDBInfo(tmdbId, mediaType) {
   return __async(this, null, function* () {
     var type = mediaType === "movie" ? "movie" : "tv";
 
-    // 1. Get English info + original language
     var urlEn = TMDB_BASE + "/" + type + "/" + tmdbId + "?api_key=" + TMDB_API_KEY + "&language=en-US";
     try {
       var r = yield safeFetch(urlEn);
@@ -144,7 +143,7 @@ function getTMDBInfo(tmdbId, mediaType) {
       if (titleEn) titles.push(titleEn);
       if (origTitle && origTitle !== titleEn) titles.push(origTitle);
 
-      // 2. Get ALL translations from TMDB (one call = all languages!)
+      // Get ALL translations from TMDB
       try {
         var urlTrans = TMDB_BASE + "/" + type + "/" + tmdbId + "/translations?api_key=" + TMDB_API_KEY;
         var rTrans = yield safeFetch(urlTrans, null, 10e3);
@@ -162,11 +161,9 @@ function getTMDBInfo(tmdbId, mediaType) {
             }
           }
         }
-      } catch (e) {
-        console.log("[Cinemana] Translations error: " + e.message);
-      }
+      } catch (e) {}
 
-      // 3. Get alternative titles as backup
+      // Get alternative titles
       try {
         var urlAlt = TMDB_BASE + "/" + type + "/" + tmdbId + "/alternative_titles?api_key=" + TMDB_API_KEY;
         var rAlt = yield safeFetch(urlAlt, null, 8e3);
@@ -180,7 +177,7 @@ function getTMDBInfo(tmdbId, mediaType) {
         }
       } catch (e) {}
 
-      // 4. Also get title in original language explicitly (for anime: Japanese, Korean, Chinese, etc.)
+      // Get title in original language
       if (origLang !== "en") {
         try {
           var r2 = yield safeFetch(TMDB_BASE + "/" + type + "/" + tmdbId + "?api_key=" + TMDB_API_KEY + "&language=" + origLang, null, 8e3);
@@ -188,13 +185,13 @@ function getTMDBInfo(tmdbId, mediaType) {
         } catch (e) {}
       }
 
-      // 5. Get Arabic title explicitly
+      // Get Arabic title
       try {
         var rAr = yield safeFetch(TMDB_BASE + "/" + type + "/" + tmdbId + "?api_key=" + TMDB_API_KEY + "&language=ar", null, 8e3);
         if (rAr.ok) { var dAr = yield rAr.json(); var tAr = dAr.title || dAr.name || ""; if (tAr && titles.indexOf(tAr) === -1) titles.push(tAr); }
       } catch (e) {}
 
-      // 6. For anime (Japanese), also try to get romaji from alternative titles
+      // For anime (Japanese), also get romaji from alternative titles
       if (origLang === "ja") {
         try {
           var rAlt2 = yield safeFetch(TMDB_BASE + "/" + type + "/" + tmdbId + "/alternative_titles?api_key=" + TMDB_API_KEY, null, 8e3);
@@ -203,7 +200,6 @@ function getTMDBInfo(tmdbId, mediaType) {
             var list2 = dAlt2.results || dAlt2.titles || [];
             for (var i = 0; i < list2.length; i++) {
               var a2 = list2[i].title || list2[i].name || "";
-              // If it looks like romaji (has Latin chars and is Japanese-related)
               if (a2 && /[a-zA-Z]/.test(a2) && titles.indexOf(a2) === -1) {
                 titles.push(a2);
                 console.log("[Cinemana] Anime romaji alt: " + a2);
@@ -285,20 +281,19 @@ function findBestMatch(tmdbInfo, mediaType, requireDubbed) {
   return __async(this, null, function* () {
     var searchType = mediaType === "movie" ? "movie" : "series";
     var isSeries = mediaType !== "movie";
+    var isAnime = tmdbInfo.originalLanguage === "ja";
     var allResults = [];
     var queries = [];
 
-    // Build queries from ALL TMDB titles (multi-language!)
+    // Build queries from ALL TMDB titles
     for (var t = 0; t < tmdbInfo.titles.length; t++) {
       var title = tmdbInfo.titles[t];
       if (!title) continue;
       if (queries.indexOf(title) === -1) queries.push(title);
 
-      // Clean version (no special chars, but KEEP all language chars!)
       var clean = title.replace(/[\:\-\–—().,!?'"]/g, " ").replace(/\s+/g, " ").trim();
       if (clean && clean !== title && queries.indexOf(clean) === -1) queries.push(clean);
 
-      // First word only (for long titles)
       var first = title.split(" ")[0];
       if (first && first.length > 3 && queries.indexOf(first) === -1) queries.push(first);
     }
@@ -315,7 +310,7 @@ function findBestMatch(tmdbInfo, mediaType, requireDubbed) {
       queries = dubQueries;
     }
 
-    console.log("[Cinemana] " + (requireDubbed ? "DUB" : "SUB") + " search queries (" + queries.length + " langs): " + queries.slice(0, 6).join(" | ") + (queries.length > 6 ? " ..." : ""));
+    console.log("[Cinemana] " + (requireDubbed ? "DUB" : "SUB") + " search (" + queries.length + " queries)");
 
     for (var q = 0; q < queries.length; q++) {
       try {
@@ -347,19 +342,17 @@ function findBestMatch(tmdbInfo, mediaType, requireDubbed) {
       var isItemSeries = itemKind === "2";
       if (isSeries !== isItemSeries) continue;
 
-      // Check dubbed status
       var isDubbed = isDubbedTitle(itemTitle) || isDubbedTitle(item.ar_title) || isDubbedTitle(item.en_title);
 
       if (requireDubbed && !isDubbed) continue;
       if (!requireDubbed && isDubbed) continue;
 
-      // Score against ALL TMDB titles (multi-language!)
+      // Score against ALL TMDB titles
       var score = 0;
       for (var t = 0; t < tmdbInfo.titles.length; t++) {
         var tmTitle = tmdbInfo.titles[t];
         var s = strictMatchScore(itemTitle, tmTitle);
 
-        // For dubbed results, also score the title with dub words removed
         if (isDubbed) {
           var cleanItemTitle = removeDubWords(itemTitle);
           var cleanScore = strictMatchScore(cleanItemTitle, tmTitle);
@@ -369,7 +362,6 @@ function findBestMatch(tmdbInfo, mediaType, requireDubbed) {
         score = Math.max(score, s);
       }
 
-      // Year bonus
       if (tmdbInfo.year && itemYear) {
         if (itemYear === tmdbInfo.year) score += 5;
       }
@@ -382,8 +374,14 @@ function findBestMatch(tmdbInfo, mediaType, requireDubbed) {
       }
     }
 
-    // STRICT: require 90+ for sub, 85+ for dub
-    var threshold = requireDubbed ? 85 : 90;
+    // LOWER thresholds for anime (romanization varies a lot)
+    // Anime: 75 for sub, 70 for dub
+    // Normal: 85 for sub, 80 for dub
+    var subThreshold = isAnime ? 75 : 85;
+    var dubThreshold = isAnime ? 70 : 80;
+    var threshold = requireDubbed ? dubThreshold : subThreshold;
+
+    console.log("[Cinemana] Threshold: " + threshold + " (isAnime=" + isAnime + ")");
 
     if (bestMatch && bestScore >= threshold) {
       console.log("[Cinemana] " + (requireDubbed ? "DUB" : "SUB") + " ACCEPTED: '" + bestMatch.title + "' (" + bestScore + ")");
@@ -473,14 +471,14 @@ function getStreams(tmdbId, mediaType, season, episode) {
 
       var allStreams = [];
 
-      // Find SUB (non-dubbed) — separate search, no dub keywords
+      // Find SUB (non-dubbed)
       var subMatch = yield findBestMatch(tmdbInfo, mediaType, false);
       if (subMatch) {
         var subStreams = yield getStreamsFromMatch(subMatch, mediaType, season, episode);
         for (var s = 0; s < subStreams.length; s++) allStreams.push(subStreams[s]);
       }
 
-      // Find DUB (dubbed) — separate search WITH dub keywords
+      // Find DUB (dubbed)
       var dubMatch = yield findBestMatch(tmdbInfo, mediaType, true);
       if (dubMatch) {
         var cleanDubTitle = removeDubWords(dubMatch.title);
@@ -491,11 +489,11 @@ function getStreams(tmdbId, mediaType, season, episode) {
 
         console.log("[Cinemana] DUB verify: cleanTitle='" + cleanDubTitle + "' vs TMDB -> score=" + verifyScore);
 
-        if (verifyScore >= 80) {
+        if (verifyScore >= 70) {
           var dubStreams = yield getStreamsFromMatch(dubMatch, mediaType, season, episode);
           for (var s = 0; s < dubStreams.length; s++) allStreams.push(dubStreams[s]);
         } else {
-          console.log("[Cinemana] DUB verification FAILED (need 80+, got " + verifyScore + "). Skipping dub.");
+          console.log("[Cinemana] DUB verification FAILED (need 70+, got " + verifyScore + "). Skipping dub.");
         }
       }
 
