@@ -480,7 +480,7 @@ function getStreams(tmdbId, mediaType, season, episode) {
 
       // Find DUB (dubbed)
       var dubMatch = yield findBestMatch(tmdbInfo, mediaType, true);
-      if (dubMatch) {
+      if (dubMatch) { 
         var cleanDubTitle = removeDubWords(dubMatch.title);
         var verifyScore = 0;
         for (var t = 0; t < tmdbInfo.titles.length; t++) {
