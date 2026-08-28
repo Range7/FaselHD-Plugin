@@ -29,6 +29,19 @@
       "contentLanguage": ["ar", "en", "ja", "ko", "es", "fr", "de", "tr", "hi", "zh"]
     },
     {
+      "id": "nuvio-viu",
+  "name": "Viu",
+  "description": "Arabic & Asian movies, TV shows, and exclusives (~3s)",
+  "version": "1.0",
+  "author": "Nuvio Team",
+  "supportedTypes": ["movie", "tv"],
+  "filename": "providers/viu.js",
+  "enabled": true,
+  "formats": ["m3u8"],
+  "logo": "https://www.viu.com/ott/v2/img/viu-logo.png",
+  "contentLanguage": ["en", "ar", "ko"]
+    },
+    {
       "id": "nuvio-moviebox",
       "name": "MovieBox",
       "description": "MovieBox HD streaming — Movies, TV Shows & Anime with multi-quality MP4/HLS/DASH streams (~8s)",
