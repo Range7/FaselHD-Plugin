@@ -32,7 +32,7 @@
       "id": "nuvio-viu",
   "name": "Viu",
   "description": "Arabic & Asian movies, TV shows, and exclusives (~3s)",
-  "version": "1.1",
+  "version": "1.1.1",
   "author": "Nuvio Team",
   "supportedTypes": ["movie", "tv"],
   "filename": "providers/viu.js",
