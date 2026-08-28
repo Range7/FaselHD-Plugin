@@ -32,7 +32,7 @@
       "id": "nuvio-cimanow",
       "name": "CimaNow",
       "description": "Arabic, Turkish, and Foreign Movies & Series (1080p FHD)",
-      "version": "1.0.4",
+      "version": "1.0.6",
       "author": "Nuvio Team",
       "supportedTypes": ["movie", "tv"],
       "filename": "providers/cimanow.js",
