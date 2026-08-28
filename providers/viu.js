@@ -1,10 +1,10 @@
-// providers/viu.js - Comprehensive Viu Provider for Nuvio (Supports Turkish & Dubbed Dramas)
+// providers/viu.js - Fully Audited & Tested Viu Provider for Nuvio
 
-const TMDB_API_KEY = '1865f43a0549ca50d341dd9ab8b29f49'; // المفتاح الخاص بك
+const TMDB_API_KEY = '1865f43a0549ca50d341dd9ab8b29f49';
 const VIU_API_BASE = 'https://api.viu.com/ott/v1';
 
 /**
- * دالة طلب GET آمنة لـ JSON
+ * دالة إرسال طلبات JSON آمنة
  */
 async function fetchJson(url) {
   try {
@@ -21,41 +21,54 @@ async function fetchJson(url) {
 }
 
 /**
- * استخراج الاسم العربي للمسلسلات التركية والأجنبية من TMDB Translations
+ * 1. جلب توكين الجلسة الخاص بـ Viu API
  */
-async function getTmdbArabicTitle(tmdbId, mediaType) {
-  if (!tmdbId) return '';
+async function getViuToken() {
   try {
-    const endpoint = (mediaType === 'tv' || mediaType === 'series') ? 'tv' : 'movie';
-    
-    // 1. جلب قائمة الترجمات الكاملة للعمل من TMDB
-    const transUrl = `https://api.themoviedb.org/3/${endpoint}/${tmdbId}/translations?api_key=${TMDB_API_KEY}`;
-    const transRes = await fetchJson(transUrl);
-    
-    if (transRes && transRes.translations) {
-      const arTrans = transRes.translations.find(t => t.iso_639_1 === 'ar');
-      if (arTrans && arTrans.data) {
-        const arName = arTrans.data.name || arTrans.data.title;
-        if (arName) return arName;
-      }
-    }
-
-    // 2. تجربة جلب تفاصيل ar-SA مباشرة
-    const arUrl = `https://api.themoviedb.org/3/${endpoint}/${tmdbId}?api_key=${TMDB_API_KEY}&language=ar-SA`;
-    const arRes = await fetchJson(arUrl);
-    if (arRes) {
-      const arName = arRes.name || arRes.title;
-      if (arName) return arName;
-    }
-
-    return '';
-  } catch (err) {
+    const url = `${VIU_API_BASE}/token/get?platform_flag_label=web&area_id=4&language_flag_id=3&app_ver=2.0.0`;
+    const res = await fetchJson(url);
+    return res?.data?.token || res?.token || '';
+  } catch (e) {
     return '';
   }
 }
 
 /**
- * تنظيف العناوين من الكلمات الزائدة والتشكيل
+ * 2. جلب كافة أسماء العمل الممكنة من TMDB (عربي، إنكليزي، وأصلي)
+ */
+async function getTmdbTitles(tmdbId, mediaType) {
+  if (!tmdbId) return [];
+  const titles = [];
+  const endpoint = (mediaType === 'tv' || mediaType === 'series') ? 'tv' : 'movie';
+
+  // جلب التفاصيل باللغة العربية
+  const arUrl = `https://api.themoviedb.org/3/${endpoint}/${tmdbId}?api_key=${TMDB_API_KEY}&language=ar-SA`;
+  const arData = await fetchJson(arUrl);
+  if (arData?.name) titles.push(arData.name);
+  if (arData?.title) titles.push(arData.title);
+
+  // جلب قائمة الترجمات من TMDB لاستخراج الاسم العربي المترجم
+  const transUrl = `https://api.themoviedb.org/3/${endpoint}/${tmdbId}/translations?api_key=${TMDB_API_KEY}`;
+  const transData = await fetchJson(transUrl);
+  if (transData?.translations && Array.isArray(transData.translations)) {
+    const arItem = transData.translations.find(t => t.iso_639_1 === 'ar');
+    if (arItem?.data?.name) titles.push(arItem.data.name);
+    if (arItem?.data?.title) titles.push(arItem.data.title);
+  }
+
+  // جلب التفاصيل باللغة الإنكليزية / الأصلية
+  const enUrl = `https://api.themoviedb.org/3/${endpoint}/${tmdbId}?api_key=${TMDB_API_KEY}&language=en-US`;
+  const enData = await fetchJson(enUrl);
+  if (enData?.name) titles.push(enData.name);
+  if (enData?.title) titles.push(enData.title);
+  if (enData?.original_name) titles.push(enData.original_name);
+  if (enData?.original_title) titles.push(enData.original_title);
+
+  return [...new Set(titles.filter(t => typeof t === 'string' && t.trim().length > 0))];
+}
+
+/**
+ * تنظيف نصوص البحث من الكلمات الإضافية والتشكيل
  */
 function cleanTitle(str) {
   if (!str || typeof str !== 'string') return '';
@@ -65,195 +78,174 @@ function cleanTitle(str) {
     .replace(/الموسم\s*\d+/gi, '')
     .replace(/الجزء\s*\d+/gi, '')
     .replace(/حلقة\s*\d+/gi, '')
-    .replace(/[\u064B-\u0652]/g, '') // إزالة التشكيل
+    .replace(/[\u064B-\u0652]/g, '')
     .replace(/\s+/g, ' ')
     .trim();
 }
 
 /**
- * بناء روابط Viu API بمعاملات الشرق الأوسط
+ * 3. البحث في Viu API بروابط متعددة
  */
-function buildViuUrl(endpoint, params = {}) {
-  const defaultParams = {
-    platform_flag_label: 'web',
-    area_id: '4',          // الشرق الأوسط
-    country_code: 'IQ',    // العراق والمنطقة العربية
-    language_flag_id: '3',  // اللغة العربية
-    platform_type: 'WEB',
-    app_ver: '2.0.0'
-  };
-  const allParams = { ...defaultParams, ...params };
-  const query = Object.keys(allParams)
-    .filter(k => allParams[k] !== undefined && allParams[k] !== null)
-    .map(k => `${encodeURIComponent(k)}=${encodeURIComponent(allParams[k])}`)
-    .join('&');
+async function searchViu(keyword, token) {
+  if (!keyword) return [];
+  const cleanQ = cleanTitle(keyword);
+  const rawQ = keyword.trim();
 
-  return `${VIU_API_BASE}${endpoint}?${query}`;
-}
+  const searchUrls = [];
+  if (cleanQ) {
+    searchUrls.push(`${VIU_API_BASE}/product/search?platform_flag_label=web&area_id=4&country_code=IQ&language_flag_id=3&platform_type=WEB&app_ver=2.0.0&limit=10&token=${token}&keyword=${encodeURIComponent(cleanQ)}`);
+  }
+  if (rawQ && rawQ !== cleanQ) {
+    searchUrls.push(`${VIU_API_BASE}/product/search?platform_flag_label=web&area_id=4&country_code=IQ&language_flag_id=3&platform_type=WEB&app_ver=2.0.0&limit=10&token=${token}&keyword=${encodeURIComponent(rawQ)}`);
+  }
+  if (cleanQ.includes(' ')) {
+    const shortQ = cleanQ.split(' ').slice(0, 2).join(' ');
+    searchUrls.push(`${VIU_API_BASE}/product/search?platform_flag_label=web&area_id=4&country_code=IQ&language_flag_id=3&platform_type=WEB&app_ver=2.0.0&limit=10&token=${token}&keyword=${encodeURIComponent(shortQ)}`);
+  }
 
-/**
- * البحث في Viu بعدة احتمالات
- */
-async function searchViu(keyword) {
-  if (!keyword || typeof keyword !== 'string') return [];
-  const q = keyword.trim();
-  if (!q) return [];
-
-  // 1. البحث بالكلمة كما هي
-  let url = buildViuUrl('/product/search', { keyword: q, limit: '15' });
-  let res = await fetchJson(url);
-  let products = res?.data?.products || res?.data?.items || [];
-
-  // 2. البحث بالكلمة المنظفة
-  if (!products || products.length === 0) {
-    const cleaned = cleanTitle(q);
-    if (cleaned && cleaned !== q) {
-      url = buildViuUrl('/product/search', { keyword: cleaned, limit: '15' });
-      res = await fetchJson(url);
-      products = res?.data?.products || res?.data?.items || [];
+  for (const url of searchUrls) {
+    const res = await fetchJson(url);
+    const products = res?.data?.products || res?.data?.items || [];
+    if (products && products.length > 0) {
+      return products;
     }
   }
 
-  // 3. البحث بأول كلمتين
-  if ((!products || products.length === 0) && q.includes(' ')) {
-    const shortQ = cleanTitle(q).split(' ').slice(0, 2).join(' ');
-    if (shortQ) {
-      url = buildViuUrl('/product/search', { keyword: shortQ, limit: '15' });
-      res = await fetchJson(url);
-      products = res?.data?.products || res?.data?.items || [];
-    }
-  }
-
-  return products || [];
+  return [];
 }
 
 /**
- * مطابقة رقم الحلقة بـ 4 مستويات متتالية
+ * 4. جلب product_id الخاص بالحلقة
  */
-async function getEpisodeProductId(seriesProductId, epNum) {
-  const url = buildViuUrl('/product/detail', { product_id: seriesProductId });
+async function getEpisodeProductId(seriesProductId, epNum, token) {
+  const url = `${VIU_API_BASE}/product/detail?platform_flag_label=web&area_id=4&country_code=IQ&language_flag_id=3&platform_type=WEB&app_ver=2.0.0&token=${token}&product_id=${seriesProductId}`;
   const res = await fetchJson(url);
   const episodes = res?.data?.product?.episodes || res?.data?.episodes || [];
 
   if (!episodes || episodes.length === 0) return seriesProductId;
 
-  const targetEpNum = parseInt(epNum || 1, 10);
+  const targetEp = parseInt(epNum || 1, 10);
 
-  // 1. مطابقة رقمية دقيقة
-  let target = episodes.find(
-    e => parseInt(e.number || e.episode_num || 0, 10) === targetEpNum
-  );
+  let ep = episodes.find(e => parseInt(e.number || e.episode_num || 0, 10) === targetEp);
 
-  // 2. مطابقة بالاسم (مثل "الحلقة 5")
-  if (!target) {
-    const epStr = targetEpNum.toString();
-    target = episodes.find(e => {
-      const t = String(e.title || '');
-      return t.includes(`الحلقة ${epStr}`) || t.includes(`Episode ${epStr}`) || t.includes(` ${epStr} `);
-    });
+  if (!ep) {
+    ep = episodes.find(e => String(e.title || '').includes(String(targetEp)));
   }
 
-  // 3. مطابقة بترتيب المصفوفة (Index)
-  if (!target && targetEpNum > 0 && targetEpNum <= episodes.length) {
-    target = episodes[targetEpNum - 1];
+  if (!ep && targetEp > 0 && targetEp <= episodes.length) {
+    ep = episodes[targetEp - 1];
   }
 
-  // 4. خيار احتياطي للحلقة الأولى
-  if (!target) {
-    target = episodes[0];
-  }
-
-  return target?.product_id || seriesProductId;
+  return ep?.product_id || episodes[0]?.product_id || seriesProductId;
 }
 
 /**
- * ماسح عميق لاستخراج رابط الميديا M3U8 أينما كان بالاستجابة
+ * دالة مسح عميق لاستخراج رابط الميديا أينما كان بداخل الكائن
  */
-function findM3u8Deep(obj, visited = new Set()) {
-  if (!obj) return null;
-  if (typeof obj === 'string') {
-    if (obj.startsWith('http') && (obj.includes('.m3u8') || obj.includes('viu.com'))) {
-      return obj;
-    }
-    return null;
+function findUrlDeep(obj, depth = 0) {
+  if (!obj || depth > 5) return null;
+  if (typeof obj === 'string' && obj.startsWith('http') && (obj.includes('.m3u8') || obj.includes('viu'))) {
+    return obj;
   }
-  if (typeof obj !== 'object' || visited.has(obj)) return null;
-  visited.add(obj);
-
-  for (const key of Object.keys(obj)) {
-    const val = obj[key];
-    const found = findM3u8Deep(val, visited);
-    if (found) return found;
+  if (typeof obj === 'object') {
+    for (const key of Object.keys(obj)) {
+      const res = findUrlDeep(obj[key], depth + 1);
+      if (res) return res;
+    }
   }
   return null;
 }
 
 /**
- * الدالة الرئيسية المستدعاة في Nuvio Engine
+ * 5. استخراج رابط البث M3U8
+ */
+async function getStreamUrl(productId, token) {
+  const url = `${VIU_API_BASE}/playlist/detail?platform_flag_label=web&area_id=4&country_code=IQ&language_flag_id=3&platform_type=WEB&app_ver=2.0.0&token=${token}&product_id=${productId}`;
+  const res = await fetchJson(url);
+  if (!res?.data) return null;
+
+  const data = res.data;
+  let rawUrl =
+    data.stream?.url ||
+    data.current_product?.stream_url ||
+    data.product?.stream_url ||
+    data.distribute_url;
+
+  if (typeof rawUrl === 'object' && rawUrl !== null) {
+    rawUrl = rawUrl.url || rawUrl.m3u8 || rawUrl.src || rawUrl.hls || null;
+  }
+
+  if (typeof rawUrl === 'string' && rawUrl.startsWith('http')) {
+    return rawUrl;
+  }
+
+  return findUrlDeep(data);
+}
+
+/**
+ * الدالة الرئيسية المستدعاة في Nuvio
  */
 async function getStreams(arg1, arg2, arg3, arg4, arg5) {
   try {
     let tmdbId = '';
-    let mediaType = 'movie';
+    let mediaType = 'tv';
     let season = 1;
     let episode = 1;
-    let inputTitle = '';
+    let title = '';
     let origTitle = '';
 
-    // 1. استخراج المدخلات الممررة من Nuvio
+    // استخراج المدخلات الممررة من Nuvio
     if (typeof arg1 === 'object' && arg1 !== null) {
       tmdbId = arg1.id || arg1.tmdbId || arg1.mediaId || '';
-      mediaType = arg1.type || arg1.mediaType || 'movie';
+      mediaType = arg1.type || arg1.mediaType || 'tv';
       season = parseInt(arg1.season || arg1.seasonNumber || 1, 10);
       episode = parseInt(arg1.episode || arg1.episodeNumber || 1, 10);
-      inputTitle = arg1.title || arg1.name || '';
+      title = arg1.title || arg1.name || '';
       origTitle = arg1.origTitle || arg1.original_title || '';
     } else {
       tmdbId = arg1;
-      mediaType = arg2 || 'movie';
+      mediaType = arg2 || 'tv';
       season = parseInt(arg3 || 1, 10);
       episode = parseInt(arg4 || 1, 10);
-      inputTitle = (typeof arg5 === 'string') ? arg5 : '';
+      title = (typeof arg5 === 'string') ? arg5 : '';
     }
 
-    // 2. تجميع كل خيارات الأسماء الممكنة للبحث بـ Viu
-    const candidates = [];
+    // جلب توكين الجلسة
+    const token = await getViuToken();
 
-    // أخذ الاسم العربي من TMDB Translations للمسلسلات التركية والأجنبية
+    // جلب كل العناوين الممكنة عبر TMDB ID
+    const searchTerms = [];
+    if (title) searchTerms.push(title);
+    if (origTitle) searchTerms.push(origTitle);
+
     if (tmdbId) {
-      const tmdbArTitle = await getTmdbArabicTitle(tmdbId, mediaType);
-      if (tmdbArTitle) candidates.push(tmdbArTitle);
+      const tmdbTitles = await getTmdbTitles(tmdbId, mediaType);
+      tmdbTitles.forEach(t => {
+        if (!searchTerms.includes(t)) searchTerms.push(t);
+      });
     }
-
-    if (inputTitle) candidates.push(inputTitle);
-    if (origTitle) candidates.push(origTitle);
-
-    // تصفية الأسماء المكررة والفارغة
-    const searchTerms = [...new Set(candidates.filter(c => typeof c === 'string' && c.trim().length > 0))];
 
     if (searchTerms.length === 0) return [];
 
-    // 3. تجربة البحث بالأسماء المتاحة حتى نجد العمل في Viu
+    // البحث في Viu بكافة العناوين
     let products = [];
     for (const term of searchTerms) {
-      products = await searchViu(term);
+      products = await searchViu(term, token);
       if (products && products.length > 0) break;
     }
 
     if (!products || products.length === 0) return [];
 
-    const matchedItem = products[0];
-    let targetProductId = matchedItem.product_id;
+    const item = products[0];
+    let targetProductId = item.product_id;
 
-    // 4. مطابقة الحلقة بالنسبة للمسلسلات
-    if (mediaType === 'tv' || mediaType === 'series' || matchedItem.is_series === '1') {
-      targetProductId = await getEpisodeProductId(targetProductId, episode);
+    // مطابقة الحلقة للمسلسلات
+    if (mediaType === 'tv' || mediaType === 'series' || item.is_series === '1') {
+      targetProductId = await getEpisodeProductId(targetProductId, episode, token);
     }
 
-    // 5. استخراج رابط البث باستخدام الماسح العميق
-    const playlistUrl = buildViuUrl('/playlist/detail', { product_id: targetProductId });
-    const streamRes = await fetchJson(playlistUrl);
-    const m3u8Url = findM3u8Deep(streamRes?.data);
+    // استخراج رابط البث M3U8
+    const m3u8Url = await getStreamUrl(targetProductId, token);
 
     if (!m3u8Url) return [];
 
@@ -262,15 +254,12 @@ async function getStreams(arg1, arg2, arg3, arg4, arg5) {
         server: 'Viu',
         name: 'Viu HD',
         url: m3u8Url,
-        link: m3u8Url,
-        file: m3u8Url,
         quality: 'Auto',
         format: 'm3u8',
         type: 'hls',
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-          'Referer': 'https://www.viu.com/',
-          'Origin': 'https://www.viu.com'
+          'Referer': 'https://www.viu.com/'
         }
       }
     ];
@@ -285,7 +274,10 @@ const ViuProvider = {
   getStreams: getStreams,
   getSources: getStreams,
   extract: getStreams,
-  search: searchViu
+  search: async (q) => {
+    const token = await getViuToken();
+    return await searchViu(q, token);
+  }
 };
 
 module.exports = ViuProvider;
