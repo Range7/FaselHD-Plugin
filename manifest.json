@@ -29,17 +29,17 @@
       "contentLanguage": ["ar", "en", "ja", "ko", "es", "fr", "de", "tr", "hi", "zh"]
     },
     {
-      "id": "nuvio-cimanow",
-      "name": "CimaNow",
-      "description": "Arabic, Turkish, and Foreign Movies & Series (1080p FHD)",
-      "version": "1.0.6",
-      "author": "Nuvio Team",
-      "supportedTypes": ["movie", "tv"],
-      "filename": "providers/cimanow.js",
+      "id": "nuvio-cee",
+      "name": "Cee",
+      "description": "Cee - Arabic movies & series with multi-quality streams",
+      "version": "1.0",
+      "author": "He",
+      "supportedTypes": ["movie", "tv", "anime"],
+      "filename": "providers/cee.js",
       "enabled": true,
-      "formats": ["m3u8", "mp4"],
-      "logo": "https://cimanow.cc/wp-content/uploads/2022/01/cimanow-logo.png",
-      "contentLanguage": ["ar", "en"]
+      "formats": ["mp4"],
+      "logo": "https://cee.buzz/favicon.ico",
+      "contentLanguage": ["ar", "en", "ja", "ko", "es", "fr", "de", "tr", "hi", "zh"]
     },
     {
       "id": "nuvio-moviebox",
