@@ -1,6 +1,6 @@
 // 2Peckle Scraper for Nuvio Local Scrapers
 // 1080p ONLY | 2Peckle ONLY via PenguPlay
-// Rich metadata in 'name' field for Nuvio display
+// Simple display - no rich metadata
 // Supports: Movies, Series, Anime, Korean, Chinese, Indian, English
 // Ultra-obfuscated token
 // React Native compatible (Hermes-safe, no async/await)
@@ -50,7 +50,7 @@ function safeFetch(url, options, timeout) {
     .catch(function(e) { if (tid) clearTimeout(tid); throw e; });
 }
 
-// TMDB: Get IMDB ID
+// TMDB: Get IMDB ID — FIXED: uses /external_ids endpoint for both movies & TV
 function getIMDBId(tmdbId, mediaType) {
   return __async(this, null, function* () {
     var tmdbType = mediaType === "movie" ? "movie" : "tv";
@@ -102,23 +102,6 @@ function getIMDBId(tmdbId, mediaType) {
   });
 }
 
-// TMDB: Get media details
-function getMediaDetails(tmdbId, mediaType) {
-  return __async(this, null, function* () {
-    var tmdbType = mediaType === "movie" ? "movie" : "tv";
-    var url = TMDB_BASE + "/" + tmdbType + "/" + tmdbId + "?api_key=" + TMDB_API_KEY + "&language=en-US";
-    try {
-      var r = yield safeFetch(url, null, 15e3);
-      if (!r.ok) return null;
-      var d = yield r.json();
-      return d;
-    } catch (e) {
-      console.log("[2Peckle] TMDB details error: " + (e.message || e));
-      return null;
-    }
-  });
-}
-
 // Build PenguPlay Config — 1080p ONLY
 function buildConfig() {
   var token = _dT();
@@ -134,108 +117,8 @@ function encodeConfig(config) {
   return encodeURIComponent(JSON.stringify(config));
 }
 
-// Extract metadata from stream title/name
-function extractStreamMeta(rawName, rawTitle) {
-  var text = ((rawName || "") + " " + (rawTitle || "")).toLowerCase();
-  var meta = {
-    source: "WEB-DL",
-    codec: "H.264",
-    audioCodec: "DDP5.1",
-    audioLang: "English",
-    subs: "English",
-    size: null,
-    hdr: false
-  };
-
-  if (text.indexOf("webrip") !== -1) meta.source = "WEBRip";
-  else if (text.indexOf("bluray") !== -1 || text.indexOf("blu-ray") !== -1) meta.source = "BluRay";
-  else if (text.indexOf("dvd") !== -1) meta.source = "DVD";
-  else if (text.indexOf("hdtv") !== -1) meta.source = "HDTV";
-  else if (text.indexOf("bdrip") !== -1) meta.source = "BDRip";
-
-  if (text.indexOf("hevc") !== -1 || text.indexOf("h.265") !== -1 || text.indexOf("x265") !== -1) meta.codec = "HEVC";
-  else if (text.indexOf("av1") !== -1) meta.codec = "AV1";
-  else if (text.indexOf("vp9") !== -1) meta.codec = "VP9";
-
-  if (text.indexOf("aac") !== -1) meta.audioCodec = "AAC";
-  else if (text.indexOf("dts") !== -1) meta.audioCodec = "DTS";
-  else if (text.indexOf("truehd") !== -1) meta.audioCodec = "TrueHD";
-  else if (text.indexOf("ac3") !== -1) meta.audioCodec = "AC3";
-
-  if (text.indexOf("arabic") !== -1 || text.indexOf("عربي") !== -1) meta.audioLang = "Arabic";
-  else if (text.indexOf("korean") !== -1) meta.audioLang = "Korean";
-  else if (text.indexOf("japanese") !== -1) meta.audioLang = "Japanese";
-  else if (text.indexOf("hindi") !== -1) meta.audioLang = "Hindi";
-  else if (text.indexOf("spanish") !== -1) meta.audioLang = "Spanish";
-  else if (text.indexOf("french") !== -1) meta.audioLang = "French";
-  else if (text.indexOf("german") !== -1) meta.audioLang = "German";
-
-  if (text.indexOf("hdr") !== -1 || text.indexOf("hdr10") !== -1 || text.indexOf("dolby vision") !== -1) meta.hdr = true;
-
-  var sizeMatch = text.match(/(\d+\.?\d*)\s*(gb|mb|tb)/);
-  if (sizeMatch) {
-    meta.size = sizeMatch[1] + " " + sizeMatch[2].toUpperCase();
-  }
-
-  return meta;
-}
-
-// Build rich display name — SINGLE LINE (guaranteed Nuvio compatible)
-function buildRichName(mediaDetails, streamMeta, mediaType, season, episode) {
-  var title = mediaDetails.title || mediaDetails.name || "Unknown";
-  var year = "";
-  if (mediaType === "movie" && mediaDetails.release_date) {
-    year = " (" + mediaDetails.release_date.substring(0, 4) + ")";
-  } else if (mediaType !== "movie" && mediaDetails.first_air_date) {
-    year = " (" + mediaDetails.first_air_date.substring(0, 4) + ")";
-  }
-
-  var parts = [];
-  parts.push("🍿 " + title + year);
-
-  var qualityPart = "🎞️ 1080p";
-  if (streamMeta.hdr) qualityPart += " HDR";
-  qualityPart += " • " + streamMeta.source;
-  qualityPart += " • " + streamMeta.audioCodec;
-  qualityPart += " • " + streamMeta.codec;
-  parts.push(qualityPart);
-
-  parts.push("🛰️ 2Peckle");
-
-  if (streamMeta.size) {
-    parts.push("💾 " + streamMeta.size);
-  }
-
-  parts.push("🎧 " + streamMeta.audioLang + "  |  📝 " + streamMeta.subs);
-
-  if (mediaType !== "movie" && season && episode) {
-    parts.push("📺 S" + season + "E" + episode);
-  }
-
-  if (mediaDetails.vote_average) {
-    parts.push("⭐ " + mediaDetails.vote_average.toFixed(1) + "/10");
-  }
-
-  if (mediaDetails.runtime && mediaType === "movie") {
-    parts.push("⏱️ " + mediaDetails.runtime + "min");
-  } else if (mediaDetails.episode_run_time && mediaDetails.episode_run_time.length > 0) {
-    parts.push("⏱️ " + mediaDetails.episode_run_time[0] + "min/ep");
-  }
-
-  if (mediaDetails.genres && mediaDetails.genres.length > 0) {
-    var genreNames = [];
-    for (var i = 0; i < mediaDetails.genres.length && i < 3; i++) {
-      genreNames.push(mediaDetails.genres[i].name);
-    }
-    parts.push("🏷️ " + genreNames.join(", "));
-  }
-
-  // SINGLE LINE — uses " | " separator (guaranteed Nuvio compatible)
-  return parts.join(" | ");
-}
-
-// Get Streams from PenguPlay
-function getPenguStreams(imdbId, mediaType, season, episode, mediaDetails) {
+// Get Streams from PenguPlay — 1080p ONLY
+function getPenguStreams(imdbId, mediaType, season, episode) {
   return __async(this, null, function* () {
     var config = buildConfig();
     var configEncoded = encodeConfig(config);
@@ -270,7 +153,7 @@ function getPenguStreams(imdbId, mediaType, season, episode, mediaDetails) {
 
       var d = yield r.json();
       var allStreams = d.streams || [];
-      console.log("[2Peckle] PenguPlay streams: " + allStreams.length);
+      console.log("[2Peckle] PenguPlay total streams: " + allStreams.length);
 
       for (var i = 0; i < allStreams.length; i++) {
         console.log("[2Peckle] Raw " + i + ": name=" + JSON.stringify(allStreams[i].name) + " title=" + JSON.stringify(allStreams[i].title));
@@ -286,7 +169,7 @@ function getPenguStreams(imdbId, mediaType, season, episode, mediaDetails) {
       }
       console.log("[2Peckle] 2Peckle count: " + peckle.length);
 
-      // Filter: 1080p ONLY + build rich metadata
+      // Filter: 1080p ONLY
       var out = [];
       for (var i = 0; i < peckle.length; i++) {
         var s = peckle[i];
@@ -295,11 +178,8 @@ function getPenguStreams(imdbId, mediaType, season, episode, mediaDetails) {
         console.log("[2Peckle] Quality: name=" + (s.name || "null") + " -> 1080=" + is1080);
         if (!is1080) continue;
 
-        var streamMeta = extractStreamMeta(s.name, s.title);
-        var richName = buildRichName(mediaDetails, streamMeta, mediaType, season, episode);
-
         var stream = {
-          name: richName,
+          name: "2Peckle",
           title: "1080p",
           url: s.url,
           quality: "1080p"
@@ -318,9 +198,6 @@ function getPenguStreams(imdbId, mediaType, season, episode, mediaDetails) {
       }
 
       console.log("[2Peckle] FINAL 1080p count: " + out.length);
-      for (var i = 0; i < out.length; i++) {
-        console.log("[2Peckle]   " + i + ": " + out[i].name.substring(0, 80) + "...");
-      }
 
       return out;
     } catch (e) {
@@ -348,16 +225,7 @@ function getStreams(tmdbId, mediaType, season, episode) {
       var tmdbMediaType = mediaType === "anime" ? "tv" : mediaType;
       console.log("[2Peckle] TMDB type will be: " + tmdbMediaType);
 
-      var imdbPromise = getIMDBId(tmdbId, tmdbMediaType);
-      var detailsPromise = getMediaDetails(tmdbId, tmdbMediaType);
-
-      var imdbId = yield imdbPromise;
-      var mediaDetails = yield detailsPromise;
-
-      if (!mediaDetails) {
-        console.log("[2Peckle] Warning: Could not fetch TMDB details, using defaults");
-        mediaDetails = {};
-      }
+      var imdbId = yield getIMDBId(tmdbId, tmdbMediaType);
 
       if (!imdbId) {
         console.log("[2Peckle] CRITICAL: No IMDB ID. Returning empty.");
@@ -365,7 +233,7 @@ function getStreams(tmdbId, mediaType, season, episode) {
       }
 
       console.log("[2Peckle] IMDB ID obtained: " + imdbId);
-      var streams = yield getPenguStreams(imdbId, mediaType, season, episode, mediaDetails);
+      var streams = yield getPenguStreams(imdbId, mediaType, season, episode);
       console.log("[2Peckle] ====== END ====== " + streams.length + " streams in " + (Date.now() - t0) + "ms");
       return streams;
     } catch (err) {
