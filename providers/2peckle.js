@@ -49,9 +49,10 @@ function safeFetch(url, options, timeout) {
     .catch(function(e) { if (tid) clearTimeout(tid); throw e; });
 }
 
-// TMDB: Get IMDB ID
+// TMDB: Get IMDB ID — FIXED: handles all non-movie types as "tv"
 function getIMDBId(tmdbId, mediaType) {
   return __async(this, null, function* () {
+    // FIX: Any non-movie type goes to TMDB "tv" endpoint
     var tmdbType = mediaType === "movie" ? "movie" : "tv";
     console.log("[2Peckle] TMDB START: type=" + tmdbType + " tmdbId=" + tmdbId);
 
@@ -158,11 +159,11 @@ function getPenguStreams(imdbId, mediaType, season, episode) {
         console.log("[2Peckle] Raw " + i + ": name=" + JSON.stringify(allStreams[i].name) + " title=" + JSON.stringify(allStreams[i].title));
       }
 
-      // Filter: 2Peckle ONLY
+      // Filter: 2Peckle ONLY — FIXED: case-insensitive
       var peckle = [];
       for (var i = 0; i < allStreams.length; i++) {
-        var n = allStreams[i].name || "";
-        if (n.indexOf("2Peckle") !== -1) {
+        var n = (allStreams[i].name || "").toLowerCase();
+        if (n.indexOf("2peckle") !== -1) {
           peckle.push(allStreams[i]);
         }
       }
