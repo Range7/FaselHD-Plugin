@@ -1,7 +1,7 @@
 // 2Peckle Scraper for Nuvio Local Scrapers
-// 1080p ONLY | 2Peckle ONLY via PenguPlay
-// Simple display - no rich metadata
-// Supports: Movies, Series, Anime, Korean, Chinese, Indian, English
+// 4K + 1080p ONLY | 2Peckle ONLY via PenguPlay
+// Quality order: 4K FIRST (forced by custom sort)
+// Supports: English, Anime, Korean, Chinese, Indian
 // Ultra-obfuscated token
 // React Native compatible (Hermes-safe, no async/await)
 
@@ -56,6 +56,7 @@ function getIMDBId(tmdbId, mediaType) {
     var tmdbType = mediaType === "movie" ? "movie" : "tv";
     console.log("[2Peckle] TMDB START: type=" + tmdbType + " tmdbId=" + tmdbId);
 
+    // FIX: Use /external_ids endpoint — works for both movie and tv
     var url = TMDB_BASE + "/" + tmdbType + "/" + tmdbId + "/external_ids?api_key=" + TMDB_API_KEY;
     var lastError = null;
 
@@ -78,6 +79,7 @@ function getIMDBId(tmdbId, mediaType) {
         var d = yield r.json();
         console.log("[2Peckle] TMDB keys: " + Object.keys(d).join(","));
 
+        // /external_ids returns imdb_id directly
         var imdb = d.imdb_id;
         console.log("[2Peckle] TMDB imdb_id=" + imdb);
 
@@ -102,13 +104,13 @@ function getIMDBId(tmdbId, mediaType) {
   });
 }
 
-// Build PenguPlay Config — 1080p ONLY
+// Build PenguPlay Config
 function buildConfig() {
   var token = _dT();
   return {
     auth_token: token,
     source_2peckle: true,
-    res_4k: false,
+    res_4k: true,
     res_1080: true
   };
 }
@@ -117,7 +119,7 @@ function encodeConfig(config) {
   return encodeURIComponent(JSON.stringify(config));
 }
 
-// Get Streams from PenguPlay — 1080p ONLY
+// Get Streams from PenguPlay
 function getPenguStreams(imdbId, mediaType, season, episode) {
   return __async(this, null, function* () {
     var config = buildConfig();
@@ -169,20 +171,32 @@ function getPenguStreams(imdbId, mediaType, season, episode) {
       }
       console.log("[2Peckle] 2Peckle count: " + peckle.length);
 
-      // Filter: 1080p ONLY
-      var out = [];
+      // Filter: 4K + 1080p ONLY (case-insensitive, expanded keywords)
+      var filtered = [];
       for (var i = 0; i < peckle.length; i++) {
         var s = peckle[i];
         var check = ((s.name || "") + " " + (s.title || "")).toLowerCase();
+        var is4k = check.indexOf("4k") !== -1 || check.indexOf("2160p") !== -1 || check.indexOf("2160") !== -1 || check.indexOf("uhd") !== -1 || check.indexOf("ultra hd") !== -1;
         var is1080 = check.indexOf("1080p") !== -1 || check.indexOf("1080") !== -1 || check.indexOf("fhd") !== -1 || check.indexOf("full hd") !== -1;
-        console.log("[2Peckle] Quality: name=" + (s.name || "null") + " -> 1080=" + is1080);
-        if (!is1080) continue;
+        console.log("[2Peckle] Quality: name=" + (s.name || "null") + " -> 4k=" + is4k + " 1080=" + is1080);
+        if (is4k || is1080) {
+          filtered.push({ stream: s, is4k: is4k, is1080: is1080 });
+        }
+      }
+      console.log("[2Peckle] After quality filter: " + filtered.length);
+
+      // Build output with 4K FIRST
+      var out = [];
+      for (var i = 0; i < filtered.length; i++) {
+        var s = filtered[i].stream;
+        var is4k = filtered[i].is4k;
+        var qName = is4k ? "4K" : "1080p";
 
         var stream = {
           name: "2Peckle",
-          title: "1080p",
+          title: qName,
           url: s.url,
-          quality: "1080p"
+          quality: qName
         };
 
         var bh = s.behaviorHints || {};
@@ -197,7 +211,17 @@ function getPenguStreams(imdbId, mediaType, season, episode) {
         out.push(stream);
       }
 
-      console.log("[2Peckle] FINAL 1080p count: " + out.length);
+      // FORCE SORT: 4K first, then 1080p (stable sort)
+      out.sort(function(a, b) {
+        if (a.quality === "4K" && b.quality !== "4K") return -1;
+        if (a.quality !== "4K" && b.quality === "4K") return 1;
+        return 0;
+      });
+
+      console.log("[2Peckle] FINAL ORDER:");
+      for (var i = 0; i < out.length; i++) {
+        console.log("[2Peckle]   " + i + ": " + out[i].quality);
+      }
 
       return out;
     } catch (e) {
