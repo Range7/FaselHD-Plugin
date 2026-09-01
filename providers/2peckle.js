@@ -50,18 +50,19 @@ function safeFetch(url, options, timeout) {
     .catch(function(e) { if (tid) clearTimeout(tid); throw e; });
 }
 
-// TMDB: Get IMDB ID
+// TMDB: Get IMDB ID — FIXED: uses /external_ids endpoint for both movies & TV
 function getIMDBId(tmdbId, mediaType) {
   return __async(this, null, function* () {
     var tmdbType = mediaType === "movie" ? "movie" : "tv";
     console.log("[2Peckle] TMDB START: type=" + tmdbType + " tmdbId=" + tmdbId);
 
-    var url = TMDB_BASE + "/" + tmdbType + "/" + tmdbId + "?api_key=" + TMDB_API_KEY + "&language=en-US";
+    // FIX: Use /external_ids endpoint — works for both movie and tv
+    var url = TMDB_BASE + "/" + tmdbType + "/" + tmdbId + "/external_ids?api_key=" + TMDB_API_KEY;
     var lastError = null;
 
     for (var attempt = 1; attempt <= 3; attempt++) {
       try {
-        console.log("[2Peckle] TMDB attempt " + attempt);
+        console.log("[2Peckle] TMDB attempt " + attempt + " URL=" + url);
         var r = yield safeFetch(url, null, 15e3);
         console.log("[2Peckle] TMDB status: " + r.status);
 
@@ -78,13 +79,9 @@ function getIMDBId(tmdbId, mediaType) {
         var d = yield r.json();
         console.log("[2Peckle] TMDB keys: " + Object.keys(d).join(","));
 
+        // /external_ids returns imdb_id directly
         var imdb = d.imdb_id;
         console.log("[2Peckle] TMDB imdb_id=" + imdb);
-
-        if (!imdb && d.external_ids) {
-          imdb = d.external_ids.imdb_id;
-          console.log("[2Peckle] TMDB external_ids.imdb_id=" + imdb);
-        }
 
         if (imdb) {
           console.log("[2Peckle] TMDB SUCCESS: " + imdb);
@@ -140,7 +137,7 @@ function getPenguStreams(imdbId, mediaType, season, episode) {
     }
 
     var url = PENGU_BASE + "/" + configEncoded + endpoint;
-    console.log("[2Peckle] URL: " + url.substring(0, 100) + "...");
+    console.log("[2Peckle] URL: " + url.substring(0, 120) + "...");
 
     try {
       var r = yield safeFetch(url, {
@@ -158,7 +155,7 @@ function getPenguStreams(imdbId, mediaType, season, episode) {
 
       var d = yield r.json();
       var allStreams = d.streams || [];
-      console.log("[2Peckle] PenguPlay streams: " + allStreams.length);
+      console.log("[2Peckle] PenguPlay total streams: " + allStreams.length);
 
       for (var i = 0; i < allStreams.length; i++) {
         console.log("[2Peckle] Raw " + i + ": name=" + JSON.stringify(allStreams[i].name) + " title=" + JSON.stringify(allStreams[i].title));
@@ -174,19 +171,19 @@ function getPenguStreams(imdbId, mediaType, season, episode) {
       }
       console.log("[2Peckle] 2Peckle count: " + peckle.length);
 
-      // Filter: 4K + 1080p ONLY (case-insensitive)
+      // Filter: 4K + 1080p ONLY (case-insensitive, expanded keywords)
       var filtered = [];
       for (var i = 0; i < peckle.length; i++) {
         var s = peckle[i];
         var check = ((s.name || "") + " " + (s.title || "")).toLowerCase();
-        var is4k = check.indexOf("4k") !== -1 || check.indexOf("2160p") !== -1 || check.indexOf("2160") !== -1;
-        var is1080 = check.indexOf("1080p") !== -1 || check.indexOf("1080") !== -1;
+        var is4k = check.indexOf("4k") !== -1 || check.indexOf("2160p") !== -1 || check.indexOf("2160") !== -1 || check.indexOf("uhd") !== -1 || check.indexOf("ultra hd") !== -1;
+        var is1080 = check.indexOf("1080p") !== -1 || check.indexOf("1080") !== -1 || check.indexOf("fhd") !== -1 || check.indexOf("full hd") !== -1;
         console.log("[2Peckle] Quality: name=" + (s.name || "null") + " -> 4k=" + is4k + " 1080=" + is1080);
         if (is4k || is1080) {
-          filtered.push({ stream: s, is4k: is4k });
+          filtered.push({ stream: s, is4k: is4k, is1080: is1080 });
         }
       }
-      console.log("[2Peckle] After quality: " + filtered.length);
+      console.log("[2Peckle] After quality filter: " + filtered.length);
 
       // Build output with 4K FIRST
       var out = [];
@@ -214,7 +211,7 @@ function getPenguStreams(imdbId, mediaType, season, episode) {
         out.push(stream);
       }
 
-      // FORCE SORT: 4K first, then 1080p
+      // FORCE SORT: 4K first, then 1080p (stable sort)
       out.sort(function(a, b) {
         if (a.quality === "4K" && b.quality !== "4K") return -1;
         if (a.quality !== "4K" && b.quality === "4K") return 1;
