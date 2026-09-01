@@ -1,6 +1,6 @@
 // 2Peckle Scraper for Nuvio Local Scrapers
 // 1080p ONLY | 2Peckle ONLY via PenguPlay
-// Rich metadata display with emojis (single-line for Nuvio compatibility)
+// Rich metadata in 'name' field for Nuvio display
 // Supports: English, Anime, Korean, Chinese, Indian
 // Ultra-obfuscated token
 // React Native compatible (Hermes-safe, no async/await)
@@ -180,8 +180,8 @@ function extractStreamMeta(rawName, rawTitle) {
   return meta;
 }
 
-// Build rich title — SINGLE LINE for Nuvio compatibility
-function buildRichTitle(mediaDetails, streamMeta, mediaType, season, episode) {
+// Build rich display name for Nuvio
+function buildRichName(mediaDetails, streamMeta, mediaType, season, episode) {
   var title = mediaDetails.title || mediaDetails.name || "Unknown";
   var year = "";
   if (mediaType === "movie" && mediaDetails.release_date) {
@@ -223,11 +223,10 @@ function buildRichTitle(mediaDetails, streamMeta, mediaType, season, episode) {
     parts.push("⏱️ " + mediaDetails.episode_run_time[0] + "min/ep");
   }
 
-  // Join with " | " — single line, no newlines
   return parts.join(" | ");
 }
 
-// Get Streams from PenguPlay — 1080p ONLY with rich metadata
+// Get Streams from PenguPlay — 1080p ONLY with rich metadata in 'name'
 function getPenguStreams(imdbId, mediaType, season, episode, mediaDetails) {
   return __async(this, null, function* () {
     var config = buildConfig();
@@ -289,17 +288,15 @@ function getPenguStreams(imdbId, mediaType, season, episode, mediaDetails) {
         if (!is1080) continue;
 
         var streamMeta = extractStreamMeta(s.name, s.title);
-        var richTitle = buildRichTitle(mediaDetails, streamMeta, mediaType, season, episode);
+        var richName = buildRichName(mediaDetails, streamMeta, mediaType, season, episode);
 
+        // FIX: Put rich info in 'name' (bold display), keep 'title' as quality
         var stream = {
-          name: "2Peckle",
-          title: richTitle,
+          name: richName,
+          title: "1080p",
           url: s.url,
           quality: "1080p"
         };
-
-        // Also add description for clients that support it
-        stream.description = richTitle;
 
         var bh = s.behaviorHints || {};
         var ph = bh.proxyHeaders || {};
@@ -315,7 +312,7 @@ function getPenguStreams(imdbId, mediaType, season, episode, mediaDetails) {
 
       console.log("[2Peckle] FINAL 1080p count: " + out.length);
       for (var i = 0; i < out.length; i++) {
-        console.log("[2Peckle]   " + i + ": " + out[i].title);
+        console.log("[2Peckle]   " + i + " name=" + out[i].name.substring(0, 80) + "...");
       }
 
       return out;
