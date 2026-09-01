@@ -1,6 +1,5 @@
 // 2Peckle Scraper for Nuvio Local Scrapers
-// 4K + 1080p ONLY | 2Peckle ONLY via PenguPlay
-// Quality order: 4K FIRST (forced by custom sort)
+// 1080p ONLY | 2Peckle ONLY via PenguPlay
 // Supports: English, Anime, Korean, Chinese, Indian
 // Ultra-obfuscated token
 // React Native compatible (Hermes-safe, no async/await)
@@ -50,13 +49,12 @@ function safeFetch(url, options, timeout) {
     .catch(function(e) { if (tid) clearTimeout(tid); throw e; });
 }
 
-// TMDB: Get IMDB ID — FIXED: uses /external_ids endpoint for both movies & TV
+// TMDB: Get IMDB ID
 function getIMDBId(tmdbId, mediaType) {
   return __async(this, null, function* () {
     var tmdbType = mediaType === "movie" ? "movie" : "tv";
     console.log("[2Peckle] TMDB START: type=" + tmdbType + " tmdbId=" + tmdbId);
 
-    // FIX: Use /external_ids endpoint — works for both movie and tv
     var url = TMDB_BASE + "/" + tmdbType + "/" + tmdbId + "/external_ids?api_key=" + TMDB_API_KEY;
     var lastError = null;
 
@@ -79,7 +77,6 @@ function getIMDBId(tmdbId, mediaType) {
         var d = yield r.json();
         console.log("[2Peckle] TMDB keys: " + Object.keys(d).join(","));
 
-        // /external_ids returns imdb_id directly
         var imdb = d.imdb_id;
         console.log("[2Peckle] TMDB imdb_id=" + imdb);
 
@@ -104,13 +101,13 @@ function getIMDBId(tmdbId, mediaType) {
   });
 }
 
-// Build PenguPlay Config
+// Build PenguPlay Config — 1080p ONLY
 function buildConfig() {
   var token = _dT();
   return {
     auth_token: token,
     source_2peckle: true,
-    res_4k: true,
+    res_4k: false,
     res_1080: true
   };
 }
@@ -119,7 +116,7 @@ function encodeConfig(config) {
   return encodeURIComponent(JSON.stringify(config));
 }
 
-// Get Streams from PenguPlay
+// Get Streams from PenguPlay — 1080p ONLY
 function getPenguStreams(imdbId, mediaType, season, episode) {
   return __async(this, null, function* () {
     var config = buildConfig();
@@ -171,32 +168,20 @@ function getPenguStreams(imdbId, mediaType, season, episode) {
       }
       console.log("[2Peckle] 2Peckle count: " + peckle.length);
 
-      // Filter: 4K + 1080p ONLY (case-insensitive, expanded keywords)
-      var filtered = [];
+      // Filter: 1080p ONLY (case-insensitive)
+      var out = [];
       for (var i = 0; i < peckle.length; i++) {
         var s = peckle[i];
         var check = ((s.name || "") + " " + (s.title || "")).toLowerCase();
-        var is4k = check.indexOf("4k") !== -1 || check.indexOf("2160p") !== -1 || check.indexOf("2160") !== -1 || check.indexOf("uhd") !== -1 || check.indexOf("ultra hd") !== -1;
         var is1080 = check.indexOf("1080p") !== -1 || check.indexOf("1080") !== -1 || check.indexOf("fhd") !== -1 || check.indexOf("full hd") !== -1;
-        console.log("[2Peckle] Quality: name=" + (s.name || "null") + " -> 4k=" + is4k + " 1080=" + is1080);
-        if (is4k || is1080) {
-          filtered.push({ stream: s, is4k: is4k, is1080: is1080 });
-        }
-      }
-      console.log("[2Peckle] After quality filter: " + filtered.length);
-
-      // Build output with 4K FIRST
-      var out = [];
-      for (var i = 0; i < filtered.length; i++) {
-        var s = filtered[i].stream;
-        var is4k = filtered[i].is4k;
-        var qName = is4k ? "4K" : "1080p";
+        console.log("[2Peckle] Quality check: name=" + (s.name || "null") + " -> 1080=" + is1080);
+        if (!is1080) continue;
 
         var stream = {
           name: "2Peckle",
-          title: qName,
+          title: "1080p",
           url: s.url,
-          quality: qName
+          quality: "1080p"
         };
 
         var bh = s.behaviorHints || {};
@@ -211,16 +196,9 @@ function getPenguStreams(imdbId, mediaType, season, episode) {
         out.push(stream);
       }
 
-      // FORCE SORT: 4K first, then 1080p (stable sort)
-      out.sort(function(a, b) {
-        if (a.quality === "4K" && b.quality !== "4K") return -1;
-        if (a.quality !== "4K" && b.quality === "4K") return 1;
-        return 0;
-      });
-
-      console.log("[2Peckle] FINAL ORDER:");
+      console.log("[2Peckle] FINAL 1080p count: " + out.length);
       for (var i = 0; i < out.length; i++) {
-        console.log("[2Peckle]   " + i + ": " + out[i].quality);
+        console.log("[2Peckle]   " + i + ": 1080p");
       }
 
       return out;
