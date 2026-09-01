@@ -1,6 +1,6 @@
 // 2Peckle Scraper for Nuvio Local Scrapers
 // 1080p ONLY | 2Peckle ONLY via PenguPlay
-// Rich metadata display with emojis
+// Rich metadata display with emojis (single-line for Nuvio compatibility)
 // Supports: English, Anime, Korean, Chinese, Indian
 // Ultra-obfuscated token
 // React Native compatible (Hermes-safe, no async/await)
@@ -147,25 +147,21 @@ function extractStreamMeta(rawName, rawTitle) {
     hdr: false
   };
 
-  // Source detection
   if (text.indexOf("webrip") !== -1) meta.source = "WEBRip";
   else if (text.indexOf("bluray") !== -1 || text.indexOf("blu-ray") !== -1) meta.source = "BluRay";
   else if (text.indexOf("dvd") !== -1) meta.source = "DVD";
   else if (text.indexOf("hdtv") !== -1) meta.source = "HDTV";
   else if (text.indexOf("bdrip") !== -1) meta.source = "BDRip";
 
-  // Video codec
   if (text.indexOf("hevc") !== -1 || text.indexOf("h.265") !== -1 || text.indexOf("x265") !== -1) meta.codec = "HEVC";
   else if (text.indexOf("av1") !== -1) meta.codec = "AV1";
   else if (text.indexOf("vp9") !== -1) meta.codec = "VP9";
 
-  // Audio codec
   if (text.indexOf("aac") !== -1) meta.audioCodec = "AAC";
   else if (text.indexOf("dts") !== -1) meta.audioCodec = "DTS";
   else if (text.indexOf("truehd") !== -1) meta.audioCodec = "TrueHD";
   else if (text.indexOf("ac3") !== -1) meta.audioCodec = "AC3";
 
-  // Audio language hints
   if (text.indexOf("arabic") !== -1 || text.indexOf("عربي") !== -1) meta.audioLang = "Arabic";
   else if (text.indexOf("korean") !== -1) meta.audioLang = "Korean";
   else if (text.indexOf("japanese") !== -1) meta.audioLang = "Japanese";
@@ -174,10 +170,8 @@ function extractStreamMeta(rawName, rawTitle) {
   else if (text.indexOf("french") !== -1) meta.audioLang = "French";
   else if (text.indexOf("german") !== -1) meta.audioLang = "German";
 
-  // HDR
   if (text.indexOf("hdr") !== -1 || text.indexOf("hdr10") !== -1 || text.indexOf("dolby vision") !== -1) meta.hdr = true;
 
-  // Size extraction (e.g. "2.33 GB", "1.5GB", "900MB")
   var sizeMatch = text.match(/(\d+\.?\d*)\s*(gb|mb|tb)/);
   if (sizeMatch) {
     meta.size = sizeMatch[1] + " " + sizeMatch[2].toUpperCase();
@@ -186,7 +180,7 @@ function extractStreamMeta(rawName, rawTitle) {
   return meta;
 }
 
-// Build rich title with emojis
+// Build rich title — SINGLE LINE for Nuvio compatibility
 function buildRichTitle(mediaDetails, streamMeta, mediaType, season, episode) {
   var title = mediaDetails.title || mediaDetails.name || "Unknown";
   var year = "";
@@ -196,40 +190,41 @@ function buildRichTitle(mediaDetails, streamMeta, mediaType, season, episode) {
     year = " (" + mediaDetails.first_air_date.substring(0, 4) + ")";
   }
 
-  var lines = [];
-  lines.push("🍿 " + title + year);
+  var parts = [];
+  parts.push("🍿 " + title + year);
 
-  var qualityLine = "🎞️ 1080p";
-  if (streamMeta.hdr) qualityLine += " • HDR";
-  qualityLine += " • " + streamMeta.source;
-  qualityLine += " • " + streamMeta.audioCodec;
-  qualityLine += " • " + streamMeta.codec;
-  lines.push(qualityLine);
+  var qualityPart = "🎞️ 1080p";
+  if (streamMeta.hdr) qualityPart += " HDR";
+  qualityPart += " • " + streamMeta.source;
+  qualityPart += " • " + streamMeta.audioCodec;
+  qualityPart += " • " + streamMeta.codec;
+  parts.push(qualityPart);
 
-  lines.push("🛰️ Source: 2Peckle");
+  parts.push("🛰️ 2Peckle");
 
   if (streamMeta.size) {
-    lines.push("💾 " + streamMeta.size);
+    parts.push("💾 " + streamMeta.size);
   }
 
-  lines.push("🎧 Audio: " + streamMeta.audioLang);
-  lines.push("📝 Subtitles: " + streamMeta.subs);
+  parts.push("🎧 " + streamMeta.audioLang);
+  parts.push("📝 " + streamMeta.subs);
 
   if (mediaType !== "movie" && season && episode) {
-    lines.push("📺 S" + season + "E" + episode);
+    parts.push("📺 S" + season + "E" + episode);
   }
 
   if (mediaDetails.vote_average) {
-    lines.push("⭐ TMDB: " + mediaDetails.vote_average.toFixed(1) + "/10");
+    parts.push("⭐ " + mediaDetails.vote_average.toFixed(1) + "/10");
   }
 
   if (mediaDetails.runtime && mediaType === "movie") {
-    lines.push("⏱️ Runtime: " + mediaDetails.runtime + " min");
+    parts.push("⏱️ " + mediaDetails.runtime + "min");
   } else if (mediaDetails.episode_run_time && mediaDetails.episode_run_time.length > 0) {
-    lines.push("⏱️ Runtime: " + mediaDetails.episode_run_time[0] + " min/episode");
+    parts.push("⏱️ " + mediaDetails.episode_run_time[0] + "min/ep");
   }
 
-  return lines.join("\n");
+  // Join with " | " — single line, no newlines
+  return parts.join(" | ");
 }
 
 // Get Streams from PenguPlay — 1080p ONLY with rich metadata
@@ -293,10 +288,7 @@ function getPenguStreams(imdbId, mediaType, season, episode, mediaDetails) {
         console.log("[2Peckle] Quality check: name=" + (s.name || "null") + " -> 1080=" + is1080);
         if (!is1080) continue;
 
-        // Extract metadata from raw stream
         var streamMeta = extractStreamMeta(s.name, s.title);
-
-        // Build rich title
         var richTitle = buildRichTitle(mediaDetails, streamMeta, mediaType, season, episode);
 
         var stream = {
@@ -305,6 +297,9 @@ function getPenguStreams(imdbId, mediaType, season, episode, mediaDetails) {
           url: s.url,
           quality: "1080p"
         };
+
+        // Also add description for clients that support it
+        stream.description = richTitle;
 
         var bh = s.behaviorHints || {};
         var ph = bh.proxyHeaders || {};
@@ -320,7 +315,7 @@ function getPenguStreams(imdbId, mediaType, season, episode, mediaDetails) {
 
       console.log("[2Peckle] FINAL 1080p count: " + out.length);
       for (var i = 0; i < out.length; i++) {
-        console.log("[2Peckle]   " + i + ": " + out[i].title.split("\n")[0]);
+        console.log("[2Peckle]   " + i + ": " + out[i].title);
       }
 
       return out;
@@ -349,7 +344,6 @@ function getStreams(tmdbId, mediaType, season, episode) {
       var tmdbMediaType = mediaType === "anime" ? "tv" : mediaType;
       console.log("[2Peckle] TMDB type will be: " + tmdbMediaType);
 
-      // Fetch IMDB ID and media details in parallel
       var imdbPromise = getIMDBId(tmdbId, tmdbMediaType);
       var detailsPromise = getMediaDetails(tmdbId, tmdbMediaType);
 
