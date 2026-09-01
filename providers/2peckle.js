@@ -1,6 +1,7 @@
 // 2Peckle Scraper for Nuvio Local Scrapers
 // 1080p ONLY | 2Peckle ONLY via PenguPlay
-// Supports: English, Anime, Korean, Chinese, Indian
+// Simple display - no rich metadata
+// Supports: Movies, Series, Anime, Korean, Chinese, Indian, English
 // Ultra-obfuscated token
 // React Native compatible (Hermes-safe, no async/await)
 
@@ -49,7 +50,7 @@ function safeFetch(url, options, timeout) {
     .catch(function(e) { if (tid) clearTimeout(tid); throw e; });
 }
 
-// TMDB: Get IMDB ID
+// TMDB: Get IMDB ID — FIXED: uses /external_ids endpoint for both movies & TV
 function getIMDBId(tmdbId, mediaType) {
   return __async(this, null, function* () {
     var tmdbType = mediaType === "movie" ? "movie" : "tv";
@@ -168,13 +169,13 @@ function getPenguStreams(imdbId, mediaType, season, episode) {
       }
       console.log("[2Peckle] 2Peckle count: " + peckle.length);
 
-      // Filter: 1080p ONLY (case-insensitive)
+      // Filter: 1080p ONLY
       var out = [];
       for (var i = 0; i < peckle.length; i++) {
         var s = peckle[i];
         var check = ((s.name || "") + " " + (s.title || "")).toLowerCase();
         var is1080 = check.indexOf("1080p") !== -1 || check.indexOf("1080") !== -1 || check.indexOf("fhd") !== -1 || check.indexOf("full hd") !== -1;
-        console.log("[2Peckle] Quality check: name=" + (s.name || "null") + " -> 1080=" + is1080);
+        console.log("[2Peckle] Quality: name=" + (s.name || "null") + " -> 1080=" + is1080);
         if (!is1080) continue;
 
         var stream = {
@@ -197,9 +198,6 @@ function getPenguStreams(imdbId, mediaType, season, episode) {
       }
 
       console.log("[2Peckle] FINAL 1080p count: " + out.length);
-      for (var i = 0; i < out.length; i++) {
-        console.log("[2Peckle]   " + i + ": 1080p");
-      }
 
       return out;
     } catch (e) {
