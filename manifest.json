@@ -29,6 +29,19 @@
       "contentLanguage": ["ar", "en", "ja", "ko", "es", "fr", "de", "tr", "hi", "zh"]
     },
     {
+      "id": "nuvio-2peckle",
+      "name": "2Peckle",
+      "description": "2Peckle via PenguPlay - 4K + 1080p ONLY (MP4/MKV)",
+      "version": "1.0",
+      "author": "He",
+      "supportedTypes": ["movie", "tv"],
+      "filename": "providers/2peckle.js",
+      "enabled": true,
+      "formats": ["mp4", "mkv"],
+      "logo": "https://pengu.uk/favicon.ico",
+      "contentLanguage": ["en"]
+    },
+    {
       "id": "nuvio-cee",
       "name": "Cee",
       "description": "Cee - Arabic movies & series with multi-quality streams",
