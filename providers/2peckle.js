@@ -1,6 +1,7 @@
 // 2Peckle Scraper for Nuvio Local Scrapers
 // 4K + 1080p ONLY | 2Peckle ONLY via PenguPlay
 // Supports: English, Anime, Korean, Chinese, Indian
+// Quality order: 4K FIRST, then 1080p
 // Ultra-obfuscated token
 // React Native compatible (Hermes-safe, no async/await)
 
@@ -16,7 +17,7 @@ var __async = (__this, __arguments, generator) => {
 var PENGU_BASE = "https://pengu.uk";
 var TMDB_BASE = "https://api.themoviedb.org/3";
 var UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36";
-var FETCH_TIMEOUT = 2e4;
+var FETCH_TIMEOUT = 3e4;
 var TMDB_API_KEY = "1865f43a0549ca50d341dd9ab8b29f49";
 
 // ═══════════════════════════════════════════════════════════════
@@ -55,22 +56,20 @@ function safeFetch(url, options, timeout) {
 function getIMDBId(tmdbId, mediaType) {
   return __async(this, null, function* () {
     var tmdbType = mediaType === "movie" ? "movie" : "tv";
-    console.log("[2Peckle] TMDB lookup: " + tmdbType + "/" + tmdbId);
+    console.log("[2Peckle] TMDB lookup: type=" + tmdbType + " id=" + tmdbId);
 
     var url = TMDB_BASE + "/" + tmdbType + "/" + tmdbId + "?api_key=" + TMDB_API_KEY + "&language=en-US";
     try {
-      var r = yield safeFetch(url, null, 15e3);
+      var r = yield safeFetch(url, null, 2e4);
       if (!r.ok) {
         console.log("[2Peckle] TMDB HTTP " + r.status);
         return null;
       }
       var d = yield r.json();
 
-      // Try direct imdb_id first
       var imdb = d.imdb_id;
       console.log("[2Peckle] TMDB direct imdb_id: " + imdb);
 
-      // If null, try external_ids
       if (!imdb && d.external_ids) {
         imdb = d.external_ids.imdb_id;
         console.log("[2Peckle] TMDB external_ids imdb_id: " + imdb);
@@ -110,16 +109,19 @@ function getPenguStreams(imdbId, mediaType, season, episode) {
   return __async(this, null, function* () {
     var config = buildConfig();
     var configEncoded = encodeConfig(config);
+    var se = Number(season || 1);
+    var ep = Number(episode || 1);
 
     var endpoint;
     if (mediaType === "movie") {
       endpoint = "/stream/movie/" + imdbId + ".json";
     } else {
-      endpoint = "/stream/series/" + imdbId + ":" + (season || 1) + ":" + (episode || 1) + ".json";
+      endpoint = "/stream/series/" + imdbId + ":" + se + ":" + ep + ".json";
     }
 
     var url = PENGU_BASE + "/" + configEncoded + endpoint;
-    console.log("[2Peckle] Calling PenguPlay: " + url.substring(0, 120) + "...");
+    console.log("[2Peckle] PenguPlay URL: " + url.substring(0, 120) + "...");
+    console.log("[2Peckle] MediaType=" + mediaType + " Season=" + se + " Episode=" + ep);
 
     try {
       var r = yield safeFetch(url, {
@@ -128,7 +130,7 @@ function getPenguStreams(imdbId, mediaType, season, episode) {
           "Referer": "https://pengu.uk/",
           "Origin": "https://pengu.uk"
         }
-      }, 2e4);
+      }, 3e4);
 
       if (!r.ok) {
         console.log("[2Peckle] PenguPlay HTTP " + r.status);
@@ -164,17 +166,17 @@ function getPenguStreams(imdbId, mediaType, season, episode) {
       }
       console.log("[2Peckle] After quality filter: " + filtered.length);
 
-      // Convert to Nuvio format
-      var out = [];
+      // Convert to Nuvio format with QUALITY SORTING: 4K FIRST
+      var out4k = [];
+      var out1080 = [];
+
       for (var i = 0; i < filtered.length; i++) {
         var s = filtered[i];
         var name = s.name || "";
         var title = s.title || "";
         var check = name + " " + title;
-        var qName = "1080p";
-        if (check.indexOf("4K") !== -1 || check.indexOf("2160p") !== -1 || check.indexOf("2160") !== -1) {
-          qName = "4K";
-        }
+        var is4k = check.indexOf("4K") !== -1 || check.indexOf("2160p") !== -1 || check.indexOf("2160") !== -1;
+        var qName = is4k ? "4K" : "1080p";
 
         var stream = {
           name: "2Peckle",
@@ -192,8 +194,16 @@ function getPenguStreams(imdbId, mediaType, season, episode) {
           if (req.Origin) stream.headers.Origin = req.Origin;
         }
 
-        out.push(stream);
+        if (is4k) {
+          out4k.push(stream);
+        } else {
+          out1080.push(stream);
+        }
       }
+
+      // 4K FIRST, then 1080p
+      var out = out4k.concat(out1080);
+      console.log("[2Peckle] 4K streams: " + out4k.length + ", 1080p streams: " + out1080.length);
 
       return out;
     } catch (e) {
@@ -207,7 +217,7 @@ function getPenguStreams(imdbId, mediaType, season, episode) {
 function getStreams(tmdbId, mediaType, season, episode) {
   return __async(this, null, function* () {
     var t0 = Date.now();
-    console.log("[2Peckle] === START === " + mediaType + "/" + tmdbId + " S" + (season || "?") + "E" + (episode || "?"));
+    console.log("[2Peckle] === START === tmdbId=" + tmdbId + " mediaType=" + mediaType + " season=" + season + " episode=" + episode);
 
     if (!TMDB_API_KEY || TMDB_API_KEY.indexOf("YOUR") !== -1) {
       console.log("[2Peckle] ERROR: TMDB API key not set");
@@ -215,15 +225,16 @@ function getStreams(tmdbId, mediaType, season, episode) {
     }
 
     try {
-      // Map anime to tv for TMDB
+      // Map anime to tv for TMDB lookup
       var tmdbMediaType = mediaType === "anime" ? "tv" : mediaType;
       var imdbId = yield getIMDBId(tmdbId, tmdbMediaType);
+
       if (!imdbId) {
-        console.log("[2Peckle] FAILED: No IMDB ID for TMDB " + tmdbId);
+        console.log("[2Peckle] FAILED: No IMDB ID for TMDB " + tmdbId + " (type=" + tmdbMediaType + ")");
         return [];
       }
 
-      console.log("[2Peckle] Using IMDB ID: " + imdbId);
+      console.log("[2Peckle] Using IMDB ID: " + imdbId + " for mediaType=" + mediaType);
       var streams = yield getPenguStreams(imdbId, mediaType, season, episode);
       console.log("[2Peckle] === END === " + streams.length + " streams in " + (Date.now() - t0) + "ms");
       return streams;
