@@ -17,10 +17,7 @@ var TMDB_BASE = "https://api.themoviedb.org/3";
 var UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36";
 var TMDB_API_KEY = "1865f43a0549ca50d341dd9ab8b29f49";
 
-// ============================================================
-// STRONG TOKEN DECODER — 4 layers of obfuscation
-// Layer 1: Base64 | Layer 2: XOR | Layer 3: Hex | Layer 4: Decoy injection
-// ============================================================
+
 function _dT() {
   // Layer 4: Obfuscated hex with decoy bytes (every 17th pair is decoy 0xDE)
   var obf = "f15480b24f83d67c04211389c46a87dcde5692f409317c31fff16abe844f" +
