@@ -1,6 +1,5 @@
 // 2Peckle Scraper for Nuvio Local Scrapers
-// 1080p ONLY | LARGEST SIZE ONLY | 2Peckle ONLY via PenguPlay
-// Returns exactly ONE stream — the biggest 1080p file
+// 1080p ONLY | LARGEST SIZE ONLY | FAST | PLAYBACK FIXED
 // Supports: Movies, Series, Anime, Korean, Chinese, Indian, English
 // React Native compatible (Hermes-safe, no async/await)
 
@@ -16,14 +15,13 @@ var __async = (__this, __arguments, generator) => {
 var PENGU_BASE = "https://pengu.uk";
 var TMDB_BASE = "https://api.themoviedb.org/3";
 var UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36";
-var FETCH_TIMEOUT = 2e4;
 var TMDB_API_KEY = "1865f43a0549ca50d341dd9ab8b29f49";
 
 // IMPORTANT: Replace this with your actual PenguPlay token from the addon settings
 var PENGU_TOKEN = "VDYLQvoGDqE81gFZawUIeLDQqzIg3VBFws4Ux9f-c5U";
 
 function safeFetch(url, options, timeout) {
-  var ms = timeout || FETCH_TIMEOUT;
+  var ms = timeout || 8e3;
   var controller, tid;
   try { controller = new AbortController(); tid = setTimeout(function() { controller.abort(); }, ms); }
   catch (e) { controller = null; }
@@ -35,57 +33,28 @@ function safeFetch(url, options, timeout) {
     .catch(function(e) { if (tid) clearTimeout(tid); throw e; });
 }
 
-// TMDB: Get IMDB ID
+// TMDB: Get IMDB ID — FAST, single attempt
 function getIMDBId(tmdbId, mediaType) {
   return __async(this, null, function* () {
     var tmdbType = mediaType === "movie" ? "movie" : "tv";
-    console.log("[2Peckle] TMDB START: type=" + tmdbType + " tmdbId=" + tmdbId);
-
     var url = TMDB_BASE + "/" + tmdbType + "/" + tmdbId + "/external_ids?api_key=" + TMDB_API_KEY;
-    var lastError = null;
 
-    for (var attempt = 1; attempt <= 3; attempt++) {
-      try {
-        console.log("[2Peckle] TMDB attempt " + attempt + " URL=" + url);
-        var r = yield safeFetch(url, null, 15e3);
-        console.log("[2Peckle] TMDB status: " + r.status);
-
-        if (!r.ok) {
-          lastError = "HTTP " + r.status;
-          if (attempt < 3) {
-            yield new Promise(function(res) { setTimeout(res, 1500); });
-            continue;
-          }
-          console.log("[2Peckle] TMDB failed: " + lastError);
-          return null;
-        }
-
-        var d = yield r.json();
-        var imdb = d.imdb_id;
-        console.log("[2Peckle] TMDB imdb_id=" + imdb);
-
-        if (imdb) {
-          console.log("[2Peckle] TMDB SUCCESS: " + imdb);
-          return imdb;
-        }
-
-        console.log("[2Peckle] TMDB no IMDB ID");
+    try {
+      var r = yield safeFetch(url, null, 8e3);
+      if (!r.ok) {
+        console.log("[2Peckle] TMDB HTTP " + r.status);
         return null;
-      } catch (e) {
-        lastError = e.message || String(e);
-        console.log("[2Peckle] TMDB error: " + lastError);
-        if (attempt < 3) {
-          yield new Promise(function(res) { setTimeout(res, 1500); });
-        }
       }
+      var d = yield r.json();
+      return d.imdb_id || null;
+    } catch (e) {
+      console.log("[2Peckle] TMDB error: " + (e.message || e));
+      return null;
     }
-
-    console.log("[2Peckle] TMDB ALL FAILED: " + lastError);
-    return null;
   });
 }
 
-// Build PenguPlay Config — 1080p ONLY
+// Build PenguPlay Config
 function buildConfig() {
   return {
     auth_token: PENGU_TOKEN,
@@ -103,22 +72,12 @@ function encodeConfig(config) {
 function extractSizeMB(text) {
   if (!text) return 0;
   text = text.toLowerCase();
-
   var gbMatch = text.match(/(\d+\.?\d*)\s*gb/);
-  if (gbMatch) {
-    return parseFloat(gbMatch[1]) * 1024;
-  }
-
+  if (gbMatch) return parseFloat(gbMatch[1]) * 1024;
   var mbMatch = text.match(/(\d+\.?\d*)\s*mb/);
-  if (mbMatch) {
-    return parseFloat(mbMatch[1]);
-  }
-
+  if (mbMatch) return parseFloat(mbMatch[1]);
   var tbMatch = text.match(/(\d+\.?\d*)\s*tb/);
-  if (tbMatch) {
-    return parseFloat(tbMatch[1]) * 1024 * 1024;
-  }
-
+  if (tbMatch) return parseFloat(tbMatch[1]) * 1024 * 1024;
   return 0;
 }
 
@@ -130,8 +89,6 @@ function getPenguStreams(imdbId, mediaType, season, episode) {
     var se = Number(season || 1);
     var ep = Number(episode || 1);
 
-    console.log("[2Peckle] PenguPlay START: imdb=" + imdbId + " type=" + mediaType + " s=" + se + " e=" + ep);
-
     var endpoint;
     if (mediaType === "movie") {
       endpoint = "/stream/movie/" + imdbId + ".json";
@@ -140,7 +97,7 @@ function getPenguStreams(imdbId, mediaType, season, episode) {
     }
 
     var url = PENGU_BASE + "/" + configEncoded + endpoint;
-    console.log("[2Peckle] URL: " + url.substring(0, 120) + "...");
+    console.log("[2Peckle] PenguPlay URL: " + url.substring(0, 100) + "...");
 
     try {
       var r = yield safeFetch(url, {
@@ -149,7 +106,7 @@ function getPenguStreams(imdbId, mediaType, season, episode) {
           "Referer": "https://pengu.uk/",
           "Origin": "https://pengu.uk"
         }
-      }, 2e4);
+      }, 12e3);
 
       if (!r.ok) {
         console.log("[2Peckle] PenguPlay HTTP " + r.status);
@@ -158,11 +115,7 @@ function getPenguStreams(imdbId, mediaType, season, episode) {
 
       var d = yield r.json();
       var allStreams = d.streams || [];
-      console.log("[2Peckle] PenguPlay total streams: " + allStreams.length);
-
-      for (var i = 0; i < allStreams.length; i++) {
-        console.log("[2Peckle] Raw " + i + ": name=" + JSON.stringify(allStreams[i].name) + " title=" + JSON.stringify(allStreams[i].title));
-      }
+      console.log("[2Peckle] Total streams: " + allStreams.length);
 
       // Filter: 2Peckle ONLY (case-insensitive)
       var peckle = [];
@@ -172,7 +125,7 @@ function getPenguStreams(imdbId, mediaType, season, episode) {
           peckle.push(allStreams[i]);
         }
       }
-      console.log("[2Peckle] 2Peckle count: " + peckle.length);
+      console.log("[2Peckle] 2Peckle streams: " + peckle.length);
 
       // Filter: 1080p ONLY + extract size
       var candidates = [];
@@ -180,67 +133,70 @@ function getPenguStreams(imdbId, mediaType, season, episode) {
         var s = peckle[i];
         var check = ((s.name || "") + " " + (s.title || "")).toLowerCase();
         var is1080 = check.indexOf("1080p") !== -1 || check.indexOf("1080") !== -1 || check.indexOf("fhd") !== -1 || check.indexOf("full hd") !== -1;
-
-        if (!is1080) {
-          console.log("[2Peckle] Skipped (not 1080p): " + (s.name || "null"));
-          continue;
-        }
+        if (!is1080) continue;
 
         var sizeMB = extractSizeMB((s.name || "") + " " + (s.title || ""));
-        console.log("[2Peckle] Candidate: name=" + (s.name || "null") + " size=" + sizeMB + "MB");
-
-        candidates.push({
-          stream: s,
-          sizeMB: sizeMB
-        });
+        candidates.push({ stream: s, sizeMB: sizeMB });
       }
 
       console.log("[2Peckle] 1080p candidates: " + candidates.length);
+      if (candidates.length === 0) return [];
 
-      if (candidates.length === 0) {
-        console.log("[2Peckle] No 1080p streams found");
-        return [];
-      }
-
-      // Find the LARGEST size
+      // Find LARGEST
       var best = candidates[0];
       for (var i = 1; i < candidates.length; i++) {
-        if (candidates[i].sizeMB > best.sizeMB) {
-          best = candidates[i];
-        }
+        if (candidates[i].sizeMB > best.sizeMB) best = candidates[i];
       }
 
-      console.log("[2Peckle] BEST (largest): size=" + best.sizeMB + "MB");
-
-      // Build size string for display
+      // Build size string
       var sizeStr = "";
-      if (best.sizeMB >= 1024) {
-        sizeStr = (best.sizeMB / 1024).toFixed(2) + " GB";
-      } else if (best.sizeMB > 0) {
-        sizeStr = best.sizeMB.toFixed(0) + " MB";
-      } else {
-        sizeStr = "Unknown";
-      }
+      if (best.sizeMB >= 1024) sizeStr = (best.sizeMB / 1024).toFixed(2) + " GB";
+      else if (best.sizeMB > 0) sizeStr = best.sizeMB.toFixed(0) + " MB";
+      else sizeStr = "Unknown";
 
-      // Return ONLY the best stream
-      var out = [{
+      // Build stream with FULL headers for playback
+      var stream = {
         name: "2Peckle",
         title: "1080p | " + sizeStr,
         url: best.stream.url,
         quality: "1080p"
-      }];
+      };
 
+      // Extract and apply ALL headers from PenguPlay for playback
       var bh = best.stream.behaviorHints || {};
-      var ph = bh.proxyHeaders || {};
-      var req = ph.request || {};
-      if (req.Referer || req.Origin) {
-        out[0].headers = {};
-        if (req.Referer) out[0].headers.Referer = req.Referer;
-        if (req.Origin) out[0].headers.Origin = req.Origin;
+      var proxyHeaders = bh.proxyHeaders || {};
+      var reqHeaders = proxyHeaders.request || {};
+
+      // Method 1: Direct headers (Nuvio/Stremio standard)
+      if (reqHeaders["Referer"] || reqHeaders["Origin"] || reqHeaders["User-Agent"]) {
+        stream.headers = {};
+        for (var key in reqHeaders) {
+          stream.headers[key] = reqHeaders[key];
+        }
       }
 
-      console.log("[2Peckle] FINAL: 1 stream returned");
-      return out;
+      // Method 2: behaviorHints (for players that need it)
+      stream.behaviorHints = {
+        notWebReady: false,
+        proxyHeaders: {
+          request: reqHeaders
+        }
+      };
+
+      // If no proxy headers but URL needs referer, add default
+      if (!stream.headers && !reqHeaders["Referer"]) {
+        stream.headers = {
+          "Referer": "https://pengu.uk/",
+          "Origin": "https://pengu.uk"
+        };
+        stream.behaviorHints.proxyHeaders.request = stream.headers;
+      }
+
+      console.log("[2Peckle] Best stream: " + stream.title);
+      console.log("[2Peckle] URL: " + stream.url.substring(0, 80) + "...");
+      console.log("[2Peckle] Headers: " + JSON.stringify(stream.headers || {}));
+
+      return [stream];
 
     } catch (e) {
       console.log("[2Peckle] PenguPlay error: " + (e.message || e));
@@ -253,9 +209,7 @@ function getPenguStreams(imdbId, mediaType, season, episode) {
 function getStreams(tmdbId, mediaType, season, episode) {
   return __async(this, null, function* () {
     var t0 = Date.now();
-    console.log("[2Peckle] ====== START ======");
-    console.log("[2Peckle] tmdbId=" + tmdbId + " mediaType=" + mediaType);
-    console.log("[2Peckle] season=" + season + " episode=" + episode);
+    console.log("[2Peckle] START: tmdbId=" + tmdbId + " type=" + mediaType);
 
     if (!TMDB_API_KEY || TMDB_API_KEY.indexOf("YOUR") !== -1) {
       console.log("[2Peckle] ERROR: TMDB key not set");
@@ -264,18 +218,15 @@ function getStreams(tmdbId, mediaType, season, episode) {
 
     try {
       var tmdbMediaType = mediaType === "anime" ? "tv" : mediaType;
-      console.log("[2Peckle] TMDB type will be: " + tmdbMediaType);
-
       var imdbId = yield getIMDBId(tmdbId, tmdbMediaType);
 
       if (!imdbId) {
-        console.log("[2Peckle] CRITICAL: No IMDB ID. Returning empty.");
+        console.log("[2Peckle] No IMDB ID");
         return [];
       }
 
-      console.log("[2Peckle] IMDB ID obtained: " + imdbId);
       var streams = yield getPenguStreams(imdbId, mediaType, season, episode);
-      console.log("[2Peckle] ====== END ====== " + streams.length + " streams in " + (Date.now() - t0) + "ms");
+      console.log("[2Peckle] END: " + streams.length + " streams in " + (Date.now() - t0) + "ms");
       return streams;
     } catch (err) {
       console.log("[2Peckle] FATAL: " + (err.message || err));
