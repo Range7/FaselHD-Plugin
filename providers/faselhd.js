@@ -1,6 +1,6 @@
 // FaselHD Scraper for Nuvio Local Scrapers
 // React Native compatible version
-// Modified: Only returns 1080p quality streams
+// Modified: Series = 1080p only | Movies = all qualities (auto, 720, 1080, etc.)
 
 var __async = (__this, __arguments, generator) => {
   return new Promise((resolve, reject) => {
@@ -27,6 +27,7 @@ var __async = (__this, __arguments, generator) => {
 var BACKEND_BASE = "http://145.241.158.129:3112";
 var UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36";
 var FETCH_TIMEOUT = 12e3;
+
 function safeFetch(url, options, timeout) {
   var ms = timeout || FETCH_TIMEOUT;
   var controller;
@@ -56,6 +57,7 @@ function safeFetch(url, options, timeout) {
     throw e;
   });
 }
+
 function getStreams(tmdbId, mediaType, season, episode) {
   return __async(this, null, function* () {
     var t0 = Date.now();
@@ -75,11 +77,23 @@ function getStreams(tmdbId, mediaType, season, episode) {
         return [];
       }
       var data = yield response.json();
-      var streams = (data.streams || []).filter(function(s) {
-        var q = (s.quality || s.resolution || s.label || s.name || "").toString().toLowerCase();
-        return q.indexOf("1080") !== -1;
-      });
-      console.log("[FaselHD] === Done: " + streams.length + " streams (1080p only) in " + (Date.now() - t0) + "ms ===");
+      var allStreams = data.streams || [];
+      var streams;
+
+      if (type === "series") {
+        // Series: 1080p only
+        streams = allStreams.filter(function(s) {
+          var q = (s.quality || s.resolution || s.label || s.name || "").toString().toLowerCase();
+          return q.indexOf("1080") !== -1;
+        });
+        console.log("[FaselHD] Series mode: " + allStreams.length + " total → " + streams.length + " x 1080p");
+      } else {
+        // Movies: all qualities (auto, 720, 1080, etc.)
+        streams = allStreams;
+        console.log("[FaselHD] Movie mode: " + streams.length + " streams (all qualities)");
+      }
+
+      console.log("[FaselHD] === Done: " + streams.length + " streams in " + (Date.now() - t0) + "ms ===");
       return streams;
     } catch (error) {
       console.log("[FaselHD] Error: " + error.message);
@@ -87,4 +101,5 @@ function getStreams(tmdbId, mediaType, season, episode) {
     }
   });
 }
+
 module.exports = { getStreams };
