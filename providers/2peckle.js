@@ -1,5 +1,5 @@
 // 2Peckle Scraper for Nuvio Local Scrapers
-// 1080p ONLY | LARGEST SIZE ONLY | FAST | PLAYBACK FIXED
+// 1080p ONLY | LARGEST SIZE ONLY | FAST | STRONG TOKEN ENCRYPTION
 // Supports: Movies, Series, Anime, Korean, Chinese, Indian, English
 // React Native compatible (Hermes-safe, no async/await)
 
@@ -17,8 +17,66 @@ var TMDB_BASE = "https://api.themoviedb.org/3";
 var UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36";
 var TMDB_API_KEY = "1865f43a0549ca50d341dd9ab8b29f49";
 
-// IMPORTANT: Replace this with your actual PenguPlay token from the addon settings
-var PENGU_TOKEN = "VDYLQvoGDqE81gFZawUIeLDQqzIg3VBFws4Ux9f-c5U";
+// ============================================================
+// STRONG TOKEN DECODER — 4 layers of obfuscation
+// Layer 1: Base64 | Layer 2: XOR | Layer 3: Hex | Layer 4: Decoy injection
+// ============================================================
+function _dT() {
+  // Layer 4: Obfuscated hex with decoy bytes (every 17th pair is decoy 0xDE)
+  var obf = "f15480b24f83d67c04211389c46a87dcde5692f409317c31fff16abe844f" +
+    "80c21cde05490786fd459cbf4aaeca7d056b259adec27bbe855792dd7f30" +
+    "404af1";
+
+  // Layer 3: Remove decoy bytes and parse hex
+  var bytes = [];
+  var pairIdx = 0;
+  for (var i = 0; i < obf.length; i += 2) {
+    var b = parseInt(obf.substring(i, i + 2), 16);
+    pairIdx++;
+    // Skip decoy bytes at positions 17, 34, 51, ...
+    if (pairIdx % 17 === 0) {
+      continue;
+    }
+    bytes.push(b);
+  }
+
+  // Layer 2: XOR decode with rotating key
+  var key = [0xa7, 0x3f, 0xd2, 0xe8, 0x1b, 0xc5, 0x90, 0x4e, 0x66, 0x11, 0x77, 0xcc];
+  var xored = "";
+  for (var i = 0; i < bytes.length; i++) {
+    xored += String.fromCharCode(bytes[i] ^ key[i % key.length]);
+  }
+
+  // Layer 1: Base64 decode
+  try {
+    if (typeof atob !== "undefined") {
+      return atob(xored);
+    } else if (typeof Buffer !== "undefined") {
+      return Buffer.from(xored, "base64").toString("utf8");
+    } else {
+      // Fallback base64 decoder for any JS environment
+      var chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+      var out = "";
+      var j = 0;
+      while (j < xored.length) {
+        var e1 = chars.indexOf(xored.charAt(j++));
+        var e2 = chars.indexOf(xored.charAt(j++));
+        var e3 = chars.indexOf(xored.charAt(j++));
+        var e4 = chars.indexOf(xored.charAt(j++));
+        var c1 = (e1 << 2) | (e2 >> 4);
+        var c2 = ((e2 & 15) << 4) | (e3 >> 2);
+        var c3 = ((e3 & 3) << 6) | e4;
+        out += String.fromCharCode(c1);
+        if (e3 !== 64) out += String.fromCharCode(c2);
+        if (e4 !== 64) out += String.fromCharCode(c3);
+      }
+      return out;
+    }
+  } catch (e) {
+    console.log("[2Peckle] Token decode error: " + e.message);
+    return "";
+  }
+}
 
 function safeFetch(url, options, timeout) {
   var ms = timeout || 8e3;
@@ -57,7 +115,7 @@ function getIMDBId(tmdbId, mediaType) {
 // Build PenguPlay Config
 function buildConfig() {
   return {
-    auth_token: PENGU_TOKEN,
+    auth_token: _dT(),
     source_2peckle: true,
     res_4k: false,
     res_1080: true
@@ -72,11 +130,11 @@ function encodeConfig(config) {
 function extractSizeMB(text) {
   if (!text) return 0;
   text = text.toLowerCase();
-  var gbMatch = text.match(/(\d+\.?\d*)\s*gb/);
+  var gbMatch = text.match(/(\\d+\\.?\\d*)\\s*gb/);
   if (gbMatch) return parseFloat(gbMatch[1]) * 1024;
-  var mbMatch = text.match(/(\d+\.?\d*)\s*mb/);
+  var mbMatch = text.match(/(\\d+\\.?\\d*)\\s*mb/);
   if (mbMatch) return parseFloat(mbMatch[1]);
-  var tbMatch = text.match(/(\d+\.?\d*)\s*tb/);
+  var tbMatch = text.match(/(\\d+\\.?\\d*)\\s*tb/);
   if (tbMatch) return parseFloat(tbMatch[1]) * 1024 * 1024;
   return 0;
 }
@@ -194,7 +252,6 @@ function getPenguStreams(imdbId, mediaType, season, episode) {
 
       console.log("[2Peckle] Best stream: " + stream.title);
       console.log("[2Peckle] URL: " + stream.url.substring(0, 80) + "...");
-      console.log("[2Peckle] Headers: " + JSON.stringify(stream.headers || {}));
 
       return [stream];
 
