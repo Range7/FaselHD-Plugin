@@ -55,6 +55,19 @@
       "contentLanguage": ["ar", "tr"]
     },
     {
+      "id": "fivetv",
+      "name": "FiveTV",
+      "description": "FiveTV Arabic/Asian movies & series - STRICT 1080p ONLY via morencius.com",
+      "version": "1.0.0",
+      "author": "He",
+      "supportedTypes": ["movie", "tv"],
+      "filename": "providers/fivetv.js",
+      "enabled": true,
+      "formats": ["m3u8"],
+      "logo": "https://new61.5tv.lol/wp-content/uploads/2026/08/cropped-download-2-11-192x192.png",
+      "contentLanguage": ["ar", "en", "ko", "zh", "ja"]
+    },
+    {
       "id": "nuvio-cee",
       "name": "Cee",
       "description": "Cee - Arabic movies & series with multi-quality streams",
