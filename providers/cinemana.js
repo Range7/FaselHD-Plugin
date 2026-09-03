@@ -16,7 +16,7 @@ var CINEMANA_BASE = "https://cinemana.shabakaty.com/api/android";
 var TMDB_BASE = "https://api.themoviedb.org/3";
 var UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36";
 var FETCH_TIMEOUT = 8e3;
-var TMDB_API_KEY = "1865f43a0549ca50d341dd9ab8b29f49";
+var TMDB_API_KEY = "439c478a771f35c05022f9feabcca01c";
 
 function safeFetch(url, options, timeout) {
   var ms = timeout || FETCH_TIMEOUT;
