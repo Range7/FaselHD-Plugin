@@ -3,8 +3,8 @@
   "version": "2.0",
   "scrapers": [
     {
-      "id": "faselhd-1080p",
-      "name": "FaselHD 1080p",
+      "id": "faselhd",
+      "name": "FaselHD",
       "description": "FaselHD Arabic movies & series - STRICT 1080p ONLY",
       "version": "1.0.0",
       "author": "He",
