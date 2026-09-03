@@ -6,7 +6,7 @@
 
 "use strict";
 
-var PROXY_URL  = "https://faselhdx-proxy-mocha.vercel.app";
+var PROXY_URL  = "https://faselhdx-proxy-yjer.vercel.app";
 var FASEL_BASE = "https://web920x.faselhdx.life";
 var TMDB_KEY   = "439c478a771f35c05022f9feabcca01c";
 var UA         = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36";
