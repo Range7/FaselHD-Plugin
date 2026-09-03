@@ -120,7 +120,8 @@ function unpackJS(script) {
     matches.push({
       base: parseInt(m[1]),
       count: parseInt(m[2]),
-      pos: m.index
+      pos: m.index,
+      matchStr: m[0]
     });
   }
   if (!matches.length) {
@@ -130,21 +131,26 @@ function unpackJS(script) {
   var base = last.base;
   var count = last.count;
   var packedEnd = last.pos;
+
   var evalOpen = script.indexOf("eval(function(p,a,c,k,e,d)");
   var funcEnd = script.indexOf("}", evalOpen);
-  var openParen = script.find("('", funcEnd);
+  var openParen = script.indexOf("('", funcEnd);
+
   if (openParen === -1 || openParen >= packedEnd) {
     return null;
   }
   var packed = script.substring(openParen + 2, packedEnd);
-  var dictStart = last.pos + last[0].length;
+
+  var dictStart = last.pos + last.matchStr.length;
   var splitMarker = "'.split('|'))";
   var dictEnd = script.indexOf(splitMarker, dictStart);
+
   if (dictEnd === -1) {
     return null;
   }
   var dictStr = script.substring(dictStart, dictEnd);
   var dictItems = dictStr.split("|");
+
   var unpacked = packed;
   for (var i = count - 1; i >= 0; i--) {
     if (i < dictItems.length && dictItems[i]) {
@@ -180,6 +186,7 @@ function extractVideoUrl(embedUrl) {
       }
     });
     if (!response.ok) {
+      console.log("[FiveTV] Embed failed: " + response.status);
       return null;
     }
     var html = yield response.text();
@@ -207,6 +214,7 @@ function extractVideoUrl(embedUrl) {
         }
       }
     }
+    console.log("[FiveTV] No video URL found in embed");
     return null;
   });
 }
@@ -279,7 +287,7 @@ function getStreams(tmdbId, mediaType, season, episode) {
         }
         var videoUrl = yield extractVideoUrl(serverUrl);
         if (videoUrl) {
-          console.log("[FiveTV] Video URL extracted");
+          console.log("[FiveTV] Video URL: " + videoUrl.substring(0, 80) + "...");
           streams.push({
             url: videoUrl,
             quality: "1080p",
