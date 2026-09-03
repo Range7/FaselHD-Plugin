@@ -201,7 +201,8 @@ function extractVideoUrl(embedUrl) {
     for (var i = 0; i < scripts.length; i++) {
       var unpacked = unpackJS(scripts[i]);
       if (unpacked) {
-        var keys = ["hls2", "hls3", "hls4"];
+        // Only hls2 works - hls3 returns 404
+        var keys = ["hls2"];
         for (var k = 0; k < keys.length; k++) {
           var km = unpacked.match(new RegExp('"' + keys[k] + '":\\s*"([^"]+)"'));
           if (km) {
@@ -216,6 +217,34 @@ function extractVideoUrl(embedUrl) {
     }
     console.log("[FiveTV] No video URL found in embed");
     return null;
+  });
+}
+
+function getM3u8Resolution(m3u8Url) {
+  return __async(this, null, function* () {
+    try {
+      var response = yield safeFetch(m3u8Url, {
+        headers: {
+          "User-Agent": UA
+        }
+      });
+      if (!response.ok) {
+        return "1080p";
+      }
+      var text = yield response.text();
+      var match = text.match(/RESOLUTION=(\d+x\d+)/);
+      if (match) {
+        var res = match[1];
+        if (res === "1920x1080") return "1080p";
+        if (res === "1280x720") return "720p";
+        if (res === "854x480") return "480p";
+        if (res === "640x360") return "360p";
+        return res;
+      }
+      return "1080p";
+    } catch (e) {
+      return "1080p";
+    }
   });
 }
 
@@ -288,18 +317,24 @@ function getStreams(tmdbId, mediaType, season, episode) {
         var videoUrl = yield extractVideoUrl(serverUrl);
         if (videoUrl) {
           console.log("[FiveTV] Video URL: " + videoUrl.substring(0, 80) + "...");
+          
+          // Parse actual resolution from m3u8
+          var resolution = yield getM3u8Resolution(videoUrl);
+          console.log("[FiveTV] Detected resolution: " + resolution);
+          
           streams.push({
             url: videoUrl,
-            quality: "1080p",
-            label: "1080p",
-            resolution: "1080p",
+            name: "FiveTV",
+            quality: resolution,
+            label: resolution,
+            resolution: resolution,
             headers: {
               "User-Agent": UA
             }
           });
         }
       }
-      console.log("[FiveTV] === Done: " + streams.length + " streams (1080p only) in " + (Date.now() - t0) + "ms ===");
+      console.log("[FiveTV] === Done: " + streams.length + " streams in " + (Date.now() - t0) + "ms ===");
       return streams;
     } catch (error) {
       console.log("[FiveTV] Error: " + error.message);
