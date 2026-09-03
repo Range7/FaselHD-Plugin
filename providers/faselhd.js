@@ -1,29 +1,25 @@
 // ═══════════════════════════════════════════════════════════════
 //  FaselHD Provider for Nuvio — Direct Scrape via CF Proxy
-//  Uses /api/fetch (Puppeteer) + enc: decryption
 //  STRICT 1080p ONLY
 // ═══════════════════════════════════════════════════════════════
 
 "use strict";
 
-var PROXY_URL  = "https://faselhdx-proxy-yjer.vercel.app";
+var PROXY_URL  = "https://faselhdx-proxy-mu.vercel.app";
 var FASEL_BASE = "https://web920x.faselhdx.life";
 var TMDB_KEY   = "439c478a771f35c05022f9feabcca01c";
 var UA         = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36";
 
-// ── Fetch via proxy (/api/fetch returns JSON {html, url, status}) ──
+// ── Fetch via proxy ─────────────────────────────────────────────
 async function proxyFetch(targetUrl, opts) {
     opts = opts || {};
-    var method = opts.method || "GET";
-    var body   = opts.body   || "";
-
     var proxyUrl = PROXY_URL + "/api/fetch?url=" + encodeURIComponent(targetUrl);
-    if (method === "POST" && body) {
-        proxyUrl += "&method=POST&body=" + encodeURIComponent(body);
+    if (opts.method === "POST" && opts.body) {
+        proxyUrl += "&method=POST&body=" + encodeURIComponent(opts.body);
     }
 
     try {
-        console.log("[FaselHD] proxyFetch: " + proxyUrl.substring(0, 120));
+        console.log("[FaselHD] proxyFetch: " + proxyUrl.substring(0, 100));
         var r = await fetch(proxyUrl, {
             headers: { "User-Agent": UA },
             method: "GET"
@@ -44,47 +40,7 @@ async function proxyFetch(targetUrl, opts) {
     }
 }
 
-// ── Direct fetch fallback ─────────────────────────────────────────
-async function directFetch(targetUrl, opts) {
-    opts = opts || {};
-    try {
-        console.log("[FaselHD] directFetch: " + targetUrl.substring(0, 120));
-        var r = await fetch(targetUrl, {
-            headers: Object.assign({
-                "User-Agent": UA,
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                "Accept-Language": "ar-EG,ar;q=0.9"
-            }, opts.headers || {}),
-            method: opts.method || "GET",
-            body: opts.body || undefined
-        });
-        if (!r.ok) {
-            console.log("[FaselHD] direct HTTP " + r.status);
-            return null;
-        }
-        return { html: await r.text(), url: r.url || targetUrl, status: r.status };
-    } catch (e) {
-        console.log("[FaselHD] directFetch exception: " + e.message);
-        return null;
-    }
-}
-
-// ── Smart fetch: proxy first, fallback to direct ──────────────────
-async function smartFetch(targetUrl, opts) {
-    // Try proxy first (bypasses CF)
-    var res = await proxyFetch(targetUrl, opts);
-    if (res) return res;
-
-    // Fallback: try direct (might work if CF not triggered)
-    console.log("[FaselHD] Proxy failed, trying direct...");
-    res = await directFetch(targetUrl, opts);
-    if (res) return res;
-
-    console.log("[FaselHD] Both proxy and direct failed for: " + targetUrl);
-    return null;
-}
-
-// ── enc: decryption (same as Cloudstream) ──────────────────────────
+// ── enc: decryption ─────────────────────────────────────────────
 function decryptFaselUrl(url) {
     if (!url || url.indexOf("enc:") !== 0) return url;
     var key1 = "V2@%YSU2B]G~";
@@ -137,7 +93,6 @@ async function getTMDBInfo(tmdbId, mediaType) {
     } catch (e) { return null; }
 }
 
-// ── Text normalization ────────────────────────────────────────────
 function normalizeText(str) {
     if (!str) return "";
     return str.toLowerCase()
@@ -148,7 +103,6 @@ function normalizeText(str) {
         .trim();
 }
 
-// ── Parse search results from FaselHD HTML ────────────────────────
 function parseSearchResults(html, base) {
     var out = [];
     var reBlock = /<div[^>]*class=["'][^"']*postDiv[^"']*["'][^>]*>[\s\S]*?<\/div>/gi;
@@ -176,19 +130,17 @@ function parseSearchResults(html, base) {
     return out;
 }
 
-// ── Search FaselHD (HTML + AJAX fallback) ─────────────────────────
 async function searchFaselHD(query) {
     var searchUrl = FASEL_BASE + "/?s=" + encodeURIComponent(query);
-    var res = await smartFetch(searchUrl);
+    var res = await proxyFetch(searchUrl);
     if (!res) return [];
     var results = parseSearchResults(res.html, FASEL_BASE);
     if (results.length > 0) return results;
 
-    // AJAX fallback
     try {
         var ajaxUrl = FASEL_BASE + "/wp-admin/admin-ajax.php";
         var body = "action=dtc_live&trsearch=" + encodeURIComponent(query);
-        var ajaxRes = await smartFetch(ajaxUrl, { method: "POST", body: body });
+        var ajaxRes = await proxyFetch(ajaxUrl, { method: "POST", body: body });
         if (ajaxRes && ajaxRes.html) {
             return parseSearchResults(ajaxRes.html, FASEL_BASE);
         }
@@ -196,7 +148,6 @@ async function searchFaselHD(query) {
     return [];
 }
 
-// ── Extract iframe URL from page HTML ─────────────────────────────
 function extractIframe(html, baseUrl) {
     var m = html.match(/<iframe[^>]*src=["']([^"']+)["']/i);
     if (m) {
@@ -224,7 +175,6 @@ function extractIframe(html, baseUrl) {
     return null;
 }
 
-// ── Guess quality from URL string ─────────────────────────────────
 function guessQuality(url) {
     var u = url.toLowerCase();
     if (u.indexOf("hd1080") !== -1 || u.indexOf("1080") !== -1) return "1080p";
@@ -234,12 +184,10 @@ function guessQuality(url) {
     return "unknown";
 }
 
-// ── Extract m3u8 from iframe/player HTML ──────────────────────────
 function extractM3U8(html, referer) {
     var streams = [];
     var seen = {};
 
-    // 1) jwplayer setup with sources
     var jw = html.match(/jwplayer\s*\([^)]*\)\s*\.\s*setup\s*\(\s*(\{[\s\S]*?\})\s*\)/);
     if (jw) {
         try {
@@ -257,14 +205,12 @@ function extractM3U8(html, referer) {
         } catch (e) {}
     }
 
-    // 2) Direct m3u8 strings
     var m3u8Re = /https?:\/\/[^\s"'<>]+\.m3u8[^\s"'<>]*/gi, mm;
     while ((mm = m3u8Re.exec(html)) !== null) {
         var u = mm[0].replace(/\\(.)/g, "$1");
         if (!seen[u]) { seen[u] = true; streams.push({ url: u, quality: guessQuality(u), referer: referer }); }
     }
 
-    // 3) enc: encrypted URLs
     var encRe = /["'](enc:[^"']+)["']/g, em;
     while ((em = encRe.exec(html)) !== null) {
         var u = decryptFaselUrl(em[1]);
@@ -277,9 +223,8 @@ function extractM3U8(html, referer) {
     return streams;
 }
 
-// ── Navigate to specific episode (TV only) ────────────────────────
 async function getEpisodeUrl(seriesUrl, season, episode) {
-    var res = await smartFetch(seriesUrl);
+    var res = await proxyFetch(seriesUrl);
     if (!res) return null;
     var html = res.html;
 
@@ -299,7 +244,7 @@ async function getEpisodeUrl(seriesUrl, season, episode) {
     }
     if (!seasonUrl) seasonUrl = seriesUrl;
 
-    var sRes = await smartFetch(seasonUrl);
+    var sRes = await proxyFetch(seasonUrl);
     if (!sRes) return null;
     var sHtml = sRes.html;
 
@@ -333,7 +278,6 @@ async function getEpisodeUrl(seriesUrl, season, episode) {
     return null;
 }
 
-// ── Title matching score ──────────────────────────────────────────
 function scoreMatch(tmdbTitle, resultTitle) {
     var a = normalizeText(tmdbTitle);
     var b = normalizeText(resultTitle);
@@ -351,7 +295,6 @@ function scoreMatch(tmdbTitle, resultTitle) {
     return wb.length > 0 ? Math.round((matched / wb.length) * 70) : 0;
 }
 
-// ── MAIN ENTRY ────────────────────────────────────────────────────
 async function getStreams(tmdbId, mediaType, season, episode) {
     if (!tmdbId) {
         console.log("[FaselHD] No TMDB ID");
@@ -410,7 +353,7 @@ async function getStreams(tmdbId, mediaType, season, episode) {
         }
     }
 
-    var pageRes = await smartFetch(pageUrl);
+    var pageRes = await proxyFetch(pageUrl);
     if (!pageRes) {
         console.log("[FaselHD] Failed to load page");
         return [];
@@ -423,7 +366,7 @@ async function getStreams(tmdbId, mediaType, season, episode) {
     }
     console.log("[FaselHD] Iframe: " + iframeUrl);
 
-    var ifrRes = await smartFetch(iframeUrl);
+    var ifrRes = await proxyFetch(iframeUrl);
     if (!ifrRes) {
         console.log("[FaselHD] Failed to load iframe");
         return [];
@@ -432,9 +375,6 @@ async function getStreams(tmdbId, mediaType, season, episode) {
     var rawStreams = extractM3U8(ifrRes.html, iframeUrl);
     console.log("[FaselHD] Raw streams: " + rawStreams.length);
 
-    // ═══════════════════════════════════════════════════════════════
-    //  STRICT 1080p ONLY
-    // ═══════════════════════════════════════════════════════════════
     var hdStreams = rawStreams.filter(function(s) {
         return s.quality === "1080p" || s.url.toLowerCase().indexOf("1080") !== -1 || s.url.toLowerCase().indexOf("hd1080") !== -1;
     });
