@@ -1,7 +1,7 @@
 // ═══════════════════════════════════════════════════════════════
-//  FaselHD Plugin for Nuvio — FINAL VERSION
+//  FaselHD Plugin for Nuvio — STRICT 1080p ONLY Edition
 //  100% Promise chains (QuickJS/Hermes compatible)
-//  Fixed: url (not link), title, quality, flexible regex
+//  Filters: ONLY 1080p streams — all other qualities rejected
 //  Date: 2026-09-03
 // ═══════════════════════════════════════════════════════════════
 
@@ -10,13 +10,12 @@
 var BASE_URL = "https://fslhd.co";
 var UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 var TMDB_KEY = "439c478a771f35c05022f9feabcca01c";
-var TIMEOUT = 15000;
 
 function log(msg) {
-  console.log("[FaselHD] " + msg);
+  console.log("[FaselHD-1080p] " + msg);
 }
 
-// ── Safe Fetch (NO AbortController — QuickJS compatible) ──────
+// ── Safe Fetch ─────────────────────────────────────────────────
 function safeFetch(url, opts) {
   var o = { method: "GET", headers: { "User-Agent": UA } };
   if (opts && opts.headers) {
@@ -75,7 +74,6 @@ function searchFaselhd(query) {
   return fetchText(BASE_URL + "/?s=" + encodeURIComponent(query)).then(function (html) {
     if (!html) return [];
     var results = [];
-    // FLEXIBLE regex — works with ANY attribute order
     var re = /(<a\b[^>]*class="movie-card"[^>]*>)([\s\S]*?)<\/a>/g;
     var m;
     while ((m = re.exec(html)) !== null) {
@@ -135,84 +133,7 @@ function unpackPacked(html) {
   return decoded;
 }
 
-// ── Extract Streams ────────────────────────────────────────────
-function extractStreamsFromPage(pageUrl) {
-  return fetchText(pageUrl).then(function (html) {
-    if (!html) return [];
-
-    // Extract ALL server buttons (flexible regex)
-    var btns = [];
-    var btnRe = /(<button\b[^>]*>)([\s\S]*?)<\/button>/g;
-    var bm;
-    while ((bm = btnRe.exec(html)) !== null) {
-      var tag = bm[1];
-      var inner = bm[2];
-      var ds = tag.match(/data-src="([^"]+)"/);
-      if (!ds) continue;
-      var labelMatch = inner.match(/<span>\s*([^<]+?)\s*<\/span>/);
-      var label = labelMatch ? labelMatch[1] : "Server";
-      btns.push({ url: ds[1], label: label });
-    }
-
-    // Priority: updown.icu first, then others (skip dood/lulu)
-    var ordered = btns.filter(function (b) { return /updown\.icu/i.test(b.url); })
-      .concat(btns.filter(function (b) { return !/updown|dood|d0o0d|lulu/i.test(b.url); }))
-      .slice(0, 4);
-
-    var streams = [];
-
-    function processNext(index) {
-      if (index >= ordered.length || streams.length >= 3) {
-        return Promise.resolve(streams);
-      }
-      var btn = ordered[index];
-
-      if (/updown\.icu/i.test(btn.url)) {
-        var qm = btn.url.match(/-(\d{3,4})x(\d{3,4})\.html/);
-        var quality = qm ? heightToQuality(parseInt(qm[2])) : "";
-        return fetchText(btn.url, { headers: { Referer: BASE_URL } }).then(function (page) {
-          var decoded = unpackPacked(page);
-          var link = "";
-          var mp4Match = decoded.match(/https?:\/\/[^"'\\\s]+\.mp4[^"'\\\s]*/);
-          var m3u8Match = decoded.match(/https?:\/\/[^"'\\\s]+\.m3u8[^"'\\\s]*/);
-          if (mp4Match) link = mp4Match[0];
-          else if (m3u8Match) link = m3u8Match[0];
-
-          if (link) {
-            // ✅ FIXED: url (not link), title, quality
-            streams.push({
-              name: "FaselHD",
-              title: "فاصل إعلاني" + (quality ? " · " + quality : ""),
-              url: link,
-              quality: quality,
-              headers: { Referer: "https://updown.icu/", "User-Agent": UA }
-            });
-          }
-          return processNext(index + 1);
-        }).catch(function () { return processNext(index + 1); });
-      } else if (/streamwish|earnvids|myvid|cybervynx|vidhide|filemoon|voe/i.test(btn.url)) {
-        return fetchText(btn.url, { headers: { Referer: BASE_URL } }).then(function (page2) {
-          var direct = (page2.match(/https?:\/\/[^"'\\\s]+\.m3u8[^"'\\\s]*/) || [])[0];
-          if (direct) {
-            var q = qualityFromLabel(btn.label);
-            streams.push({
-              name: "FaselHD",
-              title: "فاصل إعلاني · " + btn.label + (q ? " · " + q : ""),
-              url: direct,
-              quality: q,
-              headers: { Referer: btn.url }
-            });
-          }
-          return processNext(index + 1);
-        }).catch(function () { return processNext(index + 1); });
-      }
-      return processNext(index + 1);
-    }
-
-    return processNext(0);
-  });
-}
-
+// ── Quality Helpers ────────────────────────────────────────────
 function heightToQuality(h) {
   if (h >= 2000) return "4K";
   if (h >= 1000) return "1080p";
@@ -228,6 +149,128 @@ function qualityFromLabel(label) {
   if (text.indexOf("480") >= 0) return "480p";
   if (text.indexOf("360") >= 0) return "360p";
   return "";
+}
+
+function is1080p(value) {
+  var text = String(value || "").toLowerCase();
+  return text.indexOf("1080") >= 0 || text === "fhd";
+}
+
+// ── Extract Streams — STRICT 1080p ONLY ────────────────────────
+function extractStreamsFromPage(pageUrl) {
+  return fetchText(pageUrl).then(function (html) {
+    if (!html) return [];
+
+    // Extract ALL server buttons
+    var btns = [];
+    var btnRe = /(<button\b[^>]*>)([\s\S]*?)<\/button>/g;
+    var bm;
+    while ((bm = btnRe.exec(html)) !== null) {
+      var tag = bm[1];
+      var inner = bm[2];
+      var ds = tag.match(/data-src="([^"]+)"/);
+      if (!ds) continue;
+      var labelMatch = inner.match(/<span>\s*([^<]+?)\s*<\/span>/);
+      var label = labelMatch ? labelMatch[1] : "Server";
+      btns.push({ url: ds[1], label: label });
+    }
+
+    // STRICT 1080p ONLY: Filter buttons to only 1080p updown.icu
+    // updown.icu URLs contain resolution: embed-xxxx-WxH.html
+    var updown1080 = [];
+    for (var b = 0; b < btns.length; b++) {
+      if (/updown\.icu/i.test(btns[b].url)) {
+        var resMatch = btns[b].url.match(/-(\d{3,4})x(\d{3,4})\.html/);
+        if (resMatch) {
+          var height = parseInt(resMatch[2]);
+          var q = heightToQuality(height);
+          if (q === "1080p") {
+            updown1080.push(btns[b]);
+          }
+        } else if (is1080p(btns[b].label)) {
+          // Fallback: check label if URL doesn't have resolution
+          updown1080.push(btns[b]);
+        }
+      }
+    }
+
+    // If no 1080p updown found, try other hosts that claim 1080p
+    var other1080 = [];
+    if (updown1080.length === 0) {
+      for (var o = 0; o < btns.length; o++) {
+        if (!/updown|dood|d0o0d|lulu/i.test(btns[o].url) && is1080p(btns[o].label)) {
+          other1080.push(btns[o]);
+        }
+      }
+    }
+
+    var ordered = updown1080.concat(other1080).slice(0, 3);
+
+    if (ordered.length === 0) {
+      log("No 1080p servers found on page");
+      return [];
+    }
+
+    var streams = [];
+
+    function processNext(index) {
+      if (index >= ordered.length || streams.length >= 2) {
+        return Promise.resolve(streams);
+      }
+      var btn = ordered[index];
+
+      if (/updown\.icu/i.test(btn.url)) {
+        return fetchText(btn.url, { headers: { Referer: BASE_URL } }).then(function (page) {
+          var decoded = unpackPacked(page);
+          var link = "";
+          var mp4Match = decoded.match(/https?:\/\/[^"'\\\s]+\.mp4[^"'\\\s]*/);
+          var m3u8Match = decoded.match(/https?:\/\/[^"'\\\s]+\.m3u8[^"'\\\s]*/);
+          if (mp4Match) link = mp4Match[0];
+          else if (m3u8Match) link = m3u8Match[0];
+
+          if (link) {
+            // Verify the extracted link is 1080p (check URL or content)
+            var linkQuality = "";
+            var linkRes = link.match(/(\d{3,4})x(\d{3,4})/);
+            if (linkRes) linkQuality = heightToQuality(parseInt(linkRes[2]));
+            else linkQuality = qualityFromLabel(link) || "1080p";
+
+            // STRICT 1080p ONLY — skip if not 1080p
+            if (linkQuality === "1080p") {
+              streams.push({
+                name: "FaselHD",
+                title: "فاصل إعلاني · 1080p",
+                url: link,
+                quality: "1080p",
+                headers: { Referer: "https://updown.icu/", "User-Agent": UA }
+              });
+            } else {
+              log("Rejected non-1080p link: " + linkQuality);
+            }
+          }
+          return processNext(index + 1);
+        }).catch(function () { return processNext(index + 1); });
+      } else if (/streamwish|earnvids|myvid|cybervynx|vidhide|filemoon|voe/i.test(btn.url)) {
+        return fetchText(btn.url, { headers: { Referer: BASE_URL } }).then(function (page2) {
+          var direct = (page2.match(/https?:\/\/[^"'\\\s]+\.m3u8[^"'\\\s]*/) || [])[0];
+          if (direct) {
+            // STRICT 1080p ONLY
+            streams.push({
+              name: "FaselHD",
+              title: "فاصل إعلاني · 1080p",
+              url: direct,
+              quality: "1080p",
+              headers: { Referer: btn.url }
+            });
+          }
+          return processNext(index + 1);
+        }).catch(function () { return processNext(index + 1); });
+      }
+      return processNext(index + 1);
+    }
+
+    return processNext(0);
+  });
 }
 
 // ── Pick Best Result ───────────────────────────────────────────
@@ -288,7 +331,6 @@ function getStreams(tmdbId, mediaType, season, episode) {
     var candidates = [];
     var searchPromises = [];
 
-    // For series: direct episode search
     if (mediaType !== "movie" && episode) {
       searchPromises.push(
         searchFaselhd(info.titles[0] + " الحلقة " + episode).then(function (res) {
@@ -297,7 +339,6 @@ function getStreams(tmdbId, mediaType, season, episode) {
       );
     }
 
-    // Search all titles
     for (var t = 0; t < info.titles.length; t++) {
       (function (title) {
         searchPromises.push(
@@ -324,6 +365,20 @@ function getStreams(tmdbId, mediaType, season, episode) {
 
       return extractStreamsFromPage(best.url);
     });
+  }).then(function (streams) {
+    // ═══════════════════════════════════════════════════════════════
+    // STRICT 1080p ONLY — Final safety filter
+    // ═══════════════════════════════════════════════════════════════
+    var filtered = (streams || []).filter(function (s) {
+      return (s.quality || "") === "1080p";
+    });
+
+    if (!filtered.length) {
+      log("No 1080p streams after final filter");
+    } else {
+      log("Returning " + filtered.length + " x 1080p streams");
+    }
+    return filtered;
   }).catch(function (e) {
     log("Error: " + (e && e.message ? e.message : String(e)));
     return [];
