@@ -29,16 +29,16 @@
       "contentLanguage": ["ar", "en", "ja", "ko", "es", "fr", "de", "tr", "hi", "zh"]
     },
     {
-      "id": "nuvio-2peckle",
-      "name": "2Peckle",
-      "description": "2Peckle via PenguPlay - 1080p ONLY (MP4/MKV)",
-      "version": "1.0",
+      "id": "nuvio-111477",
+      "name": "111477",
+      "description": "111477 - 1080p only with full stream metadata",
+      "version": "1.0.0",
       "author": "He",
       "supportedTypes": ["movie", "tv"],
-      "filename": "providers/2peckle.js",
+      "filename": "providers/111477.js",
       "enabled": true,
-      "formats": ["mp4", "mkv"],
-      "logo": "https://pengu.uk/favicon.ico",
+      "formats": ["mp4", "m3u8"],
+      "logo": "https://a.111477.xyz/favicon.ico",
       "contentLanguage": ["en"]
     },
     {
