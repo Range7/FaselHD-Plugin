@@ -1,44 +1,216 @@
+// a111477 — 111477 provider (self-contained)
+// Extracts ALL 1080p streams with full metadata
+
+var SERVICE_ORIGIN = "https://st.111477.xyz";
+var DEFAULT_HOST = "https://a.111477.xyz/";
+var TMDB_API_KEY = "b3556f3b206e16f82df4d1f6fd4545e6";
+var TMDB_DIRECT = "https://api.themoviedb.org/3";
+var TMDB_PROXY = "https://db.speedracelight.com/3";
+var UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+var HEADERS = {
+  "User-Agent": UA,
+  "Accept": "application/json, text/plain, */*"
+};
+
+// ── Base64 URL Encode ──────────────────────────────────────────────────────
+function base64UrlEncode(str) {
+  var B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  var bytes = [];
+  for (var i = 0; i < str.length; i++) {
+    var c = str.charCodeAt(i);
+    if (c < 128) {
+      bytes.push(c);
+    } else if (c < 2048) {
+      bytes.push(192 | (c >> 6), 128 | (c & 63));
+    } else {
+      bytes.push(224 | (c >> 12), 128 | ((c >> 6) & 63), 128 | (c & 63));
+    }
+  }
+  var out = "";
+  for (var j = 0; j < bytes.length; j += 3) {
+    var b0 = bytes[j];
+    var b1 = j + 1 < bytes.length ? bytes[j + 1] : 0;
+    var b2 = j + 2 < bytes.length ? bytes[j + 2] : 0;
+    out += B64.charAt(b0 >> 2);
+    out += B64.charAt(((b0 & 3) << 4) | (b1 >> 4));
+    out += j + 1 < bytes.length ? B64.charAt(((b1 & 15) << 2) | (b2 >> 6)) : "=";
+    out += j + 2 < bytes.length ? B64.charAt(b2 & 63) : "=";
+  }
+  return out.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+// ── Fetch with timeout ─────────────────────────────────────────────────────
+function fetchT(url, opts, ms) {
+  return new Promise(function (resolve, reject) {
+    var finished = false;
+    var timer = setTimeout(function () {
+      if (!finished) {
+        finished = true;
+        reject(new Error("timeout"));
+      }
+    }, ms || 10000);
+    fetch(url, opts)
+      .then(function (res) {
+        if (!finished) {
+          finished = true;
+          clearTimeout(timer);
+          resolve(res);
+        }
+      })
+      .catch(function (e) {
+        if (!finished) {
+          finished = true;
+          clearTimeout(timer);
+          reject(e);
+        }
+      });
+  });
+}
+
+// ── TMDB resolve Meta ──────────────────────────────────────────────────────
+function resolveMeta(tmdbId, mediaType) {
+  var kind = mediaType === "tv" ? "tv" : "movie";
+  var url1 = TMDB_DIRECT + "/" + kind + "/" + tmdbId + "?append_to_response=external_ids&api_key=" + TMDB_API_KEY;
+  var url2 = TMDB_PROXY + "/" + kind + "/" + tmdbId + "?append_to_response=external_ids";
+  function tryFetch(url) {
+    return fetchT(url, { headers: { "User-Agent": UA, Accept: "application/json" } }, 8000)
+      .then(function (res) {
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        return res.json();
+      });
+  }
+  return tryFetch(url1).catch(function () {
+    return tryFetch(url2);
+  }).then(function (data) {
+    var imdbId = (data && data.external_ids && data.external_ids.imdb_id) || (data && data.imdb_id) || null;
+    return { imdbId: imdbId };
+  }).catch(function () {
+    return null;
+  });
+}
+
+// ── Quality helpers ────────────────────────────────────────────────────────
+function parseQuality(s) {
+  var t = String(s || "").toUpperCase();
+  if (t.indexOf("2160") !== -1 || t.indexOf("4K") !== -1 || t.indexOf("UHD") !== -1) return "4K";
+  if (t.indexOf("1080") !== -1 || t.indexOf("FHD") !== -1 || t.indexOf("FULL HD") !== -1) return "1080p";
+  if (t.indexOf("720") !== -1) return "720p";
+  if (t.indexOf("480") !== -1) return "480p";
+  return "Auto";
+}
+function qualityRank(q) {
+  if (q === "4K") return 5;
+  if (q === "1080p") return 4;
+  if (q === "720p") return 3;
+  if (q === "480p") return 2;
+  return 0;
+}
+function dedupByUrl(list) {
+  var seen = {};
+  var out = [];
+  for (var i = 0; i < list.length; i++) {
+    var s = list[i];
+    if (s && s.url && !seen[s.url]) {
+      seen[s.url] = true;
+      out.push(s);
+    }
+  }
+  return out;
+}
+function sortByQuality(list) {
+  return list.slice().sort(function (a, b) {
+    return qualityRank(b.quality) - qualityRank(a.quality);
+  });
+}
+
+// ── Manifest base URL ──────────────────────────────────────────────────────
+function manifestBaseUrl(host, sort, limit) {
+  host = host || DEFAULT_HOST;
+  sort = sort || "file-desc";
+  limit = limit || 3;
+  var config = host.trim();
+  if (!config.endsWith("/")) config += "/";
+  if (sort && sort !== "none") config += "::sort=" + sort;
+  if (limit > 0 && limit !== 5) config += "::limit=" + limit;
+  return SERVICE_ORIGIN + "/config/" + base64UrlEncode(config);
+}
+
+// ── Main getStreams (Promise-based, Hermes-safe) ──────────────────────────
 function getStreams(tmdbId, mediaType, season, episode) {
-  return __async(this, null, function* () {
-    const out = [];
-    const seen = new Set();
-    try {
-      const isTv = mediaType === "tv";
-      const meta = yield resolveMeta(tmdbId, mediaType);
-      const ids = [];
-      if (meta && meta.imdbId && meta.imdbId.startsWith("tt")) ids.push(meta.imdbId);
-      ids.push(`tmdb:${tmdbId}`);
-      const addonBase = manifestBaseUrl();
-      for (const id of ids) {
-        const ep = isTv ? `${addonBase}/stream/series/${id}:${season || 1}:${episode || 1}.json` : `${addonBase}/stream/movie/${id}.json`;
-        try {
-          const res = yield fetchT(ep, { headers: HEADERS }, 1e4);
-          if (!res.ok) continue;
-          const data = yield res.json();
-          const streams = data && data.streams;
-          if (!Array.isArray(streams)) continue;
-          for (const it of streams) {
-            const url = it && it.url;
-            if (!url || !String(url).startsWith("http") || seen.has(url)) continue;
-            const label = it.title || it.name || "111477";
-            let quality = parseQuality(label);
-            if (quality === "Auto" || quality === "Unknown") quality = "1080p";
-            if (quality !== "1080p") continue;
-            seen.add(url);
-            out.push({
-              ...it,
-              name: it.name || "111477",
-              title: label,
-              url,
-              quality,
-              headers: HEADERS
-            });
+  return resolveMeta(tmdbId, mediaType).then(function (meta) {
+    var ids = [];
+    if (meta && meta.imdbId && meta.imdbId.indexOf("tt") === 0) ids.push(meta.imdbId);
+    ids.push("tmdb:" + tmdbId);
+
+    var addonBase = manifestBaseUrl();
+    var promises = [];
+
+    for (var i = 0; i < ids.length; i++) {
+      var id = ids[i];
+      var ep = mediaType === "tv"
+        ? addonBase + "/stream/series/" + id + ":" + (season || 1) + ":" + (episode || 1) + ".json"
+        : addonBase + "/stream/movie/" + id + ".json";
+
+      var p = fetchT(ep, { headers: HEADERS }, 15000)
+        .then(function (res) {
+          if (!res.ok) return [];
+          return res.json();
+        })
+        .then(function (data) {
+          var streams = data && data.streams;
+          return Array.isArray(streams) ? streams : [];
+        })
+        .catch(function () {
+          return [];
+        });
+
+      promises.push(p);
+    }
+
+    return Promise.all(promises).then(function (groups) {
+      var out = [];
+      var seen = {};
+      for (var g = 0; g < groups.length; g++) {
+        var streams = groups[g];
+        for (var j = 0; j < streams.length; j++) {
+          var it = streams[j];
+          var url = it && it.url;
+          if (!url || String(url).indexOf("http") !== 0 || seen[url]) continue;
+
+          var label = it.title || it.name || "111477";
+          var quality = parseQuality(label);
+          if (quality === "Auto") quality = "1080p";
+          if (quality !== "1080p") continue;
+
+          seen[url] = true;
+
+          // كل المعلومات الأصلية + الأساسية
+          var entry = {};
+          for (var k in it) {
+            if (Object.prototype.hasOwnProperty.call(it, k)) {
+              entry[k] = it[k];
+            }
           }
-        } catch (e) {
+          entry.name = it.name || "111477";
+          entry.title = label;
+          entry.url = url;
+          entry.quality = quality;
+          entry.headers = HEADERS;
+          out.push(entry);
         }
       }
-    } catch (e) {
-    }
-    return sortByQuality(dedupByUrl(out));
+      return sortByQuality(dedupByUrl(out));
+    });
+  }).catch(function (e) {
+    return [];
   });
+}
+
+// ── Export ─────────────────────────────────────────────────────────────────
+if (typeof module !== "undefined" && module.exports) {
+  module.exports = { getStreams: getStreams };
+} else if (typeof globalThis !== "undefined") {
+  globalThis.getStreams = getStreams;
+} else if (typeof window !== "undefined") {
+  window.getStreams = getStreams;
 }
