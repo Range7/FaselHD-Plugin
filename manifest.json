@@ -1,0 +1,97 @@
+{
+  "name": "G2nOOn",
+  "version": "2.0",
+  "scrapers": [
+    {
+      "id": "faselhd",
+      "name": "FaselHD",
+      "description": "FaselHD Arabic movies & series - STRICT 1080p ONLY",
+      "version": "1.0.0",
+      "author": "He",
+      "supportedTypes": ["movie", "tv"],
+      "filename": "providers/faselhd.js",
+      "enabled": true,
+      "formats": ["m3u8"],
+      "logo": "https://raw.githubusercontent.com/nvmindl/nuvio-providers/main/Assets/faselhdx.png",
+      "contentLanguage": ["ar", "en"]
+    },
+    {
+      "id": "nuvio-cinemana",
+      "name": "Cinemana",
+      "description": "Shabakaty Cinemana - STRICT 1080p ONLY with exact title matching",
+      "version": "4.0",
+      "author": "He",
+      "supportedTypes": ["movie", "tv", "anime"],
+      "filename": "providers/cinemana.js",
+      "enabled": true,
+      "formats": ["mp4"],
+      "logo": "https://cinemana.shabakaty.cc/assets/images/logo.png",
+      "contentLanguage": ["ar", "en", "ja", "ko", "es", "fr", "de", "tr", "hi", "zh"]
+    },
+    {
+      "id": "a111477",
+      "name": "111477",
+      "description": "111477 - 1080p streams",
+      "version": "0.2.0",
+      "author": "He",
+      "supportedTypes": ["movie", "tv"],
+      "filename": "providers/a111477.js",
+      "enabled": true,
+      "formats": ["mp4", "mkv"],
+      "logo": "",
+      "contentLanguage": ["en"]
+    },
+    {
+      "id": "krmzi",
+      "name": "Krmzi",
+      "description": "Krmzi Turkish series - STRICT 1080p ONLY",
+      "version": "1.0.0",
+      "author": "He",
+      "supportedTypes": ["tv"],
+      "filename": "providers/krmzi.js",
+      "enabled": true,
+      "formats": ["m3u8", "mp4"],
+      "logo": "https://krmizi.onl/favicon.ico",
+      "contentLanguage": ["ar", "tr"]
+    },
+    {
+      "id": "4khdhub",
+      "name": "4KHDHub",
+      "description": "4KHDHub - Movies & series via 4khdhub.one - STRICT 1080p ONLY (largest file priority)",
+      "version": "1.0.0",
+      "author": "He",
+      "supportedTypes": ["movie", "tv"],
+      "filename": "providers/4khdhub.js",
+      "enabled": true,
+      "formats": ["mp4", "mkv"],
+      "logo": "https://4khdhub.one/favicon.ico",
+      "contentLanguage": ["ar", "en", "ko", "zh", "ja"]
+    },
+    {
+      "id": "nuvio-cee",
+      "name": "Cee",
+      "description": "Cee - Arabic movies & series with multi-quality streams",
+      "version": "1.0",
+      "author": "He",
+      "supportedTypes": ["movie", "tv", "anime"],
+      "filename": "providers/cee.js",
+      "enabled": true,
+      "formats": ["mp4"],
+      "logo": "https://cee.buzz/favicon.ico",
+      "contentLanguage": ["ar", "en", "ja", "ko", "es", "fr", "de", "tr", "hi", "zh"]
+    },
+    {
+      "id": "nuvio-moviebox",
+      "name": "MovieBox",
+      "description": "MovieBox HD streaming — Movies, TV Shows & Anime with multi-quality MP4/HLS/DASH streams (~8s)",
+      "version": "2.0",
+      "author": "Nuvio Team",
+      "supportedTypes": ["movie", "tv", "anime"],
+      "filename": "providers/moviebox.js",
+      "enabled": true,
+      "formats": ["mp4", "m3u8", "dash"],
+      "logo": "https://files.catbox.moe/4mdxz9.jpeg",
+      "contentLanguage": ["en"]
+    }
+  ]
+}
