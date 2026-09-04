@@ -57,14 +57,14 @@
     {
       "id": "4khdhub",
       "name": "4KHDHub",
-      "description": "FiveTV Arabic/Asian movies & series - STRICT 1080p ONLY via morencius.com",
+      "description": "4KHDHub - Movies & series via 4khdhub.one - STRICT 1080p ONLY (largest file priority)",
       "version": "1.0.0",
       "author": "He",
       "supportedTypes": ["movie", "tv"],
       "filename": "providers/4khdhub.js",
       "enabled": true,
-      "formats": ["m3u8"],
-      "logo": "https://new61.5tv.lol/wp-content/uploads/2026/08/cropped-download-2-11-192x192.png",
+      "formats": ["mp4", "mkv"],
+      "logo": "https://4khdhub.one/favicon.ico",
       "contentLanguage": ["ar", "en", "ko", "zh", "ja"]
     },
     {
