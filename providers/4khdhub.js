@@ -8,8 +8,9 @@
  *   - x-href Base64 decode for HubCloud download buttons
  *   - Buzz Family (.buzz) + R2 (.r2.dev) + Workers.dev + PixelDrain support
  *   - Multi-tier in-memory L0/L1 caching
+ *   - Enhanced search (IMDB ID, WP REST API, multi-strategy fallback)
  *   - Rich stream metadata (codec, audio, HDR, source, bitrate, fps)
- *   - STRICT 1080p ONLY + Largest File Priority
+ *   - STRICT 1080p ONLY + Fallback to all 1080p servers (largest first)
  */
 
 var BASE_URL = "https://4khdhub.one";
@@ -45,7 +46,6 @@ function getTmdbKey() {
             return s.tmdbKey || s.tmdb_key || s.apiKey || s.api_key;
         }
     } catch(e) {}
-    // Decoded public read-only fallback pool (Base64 encoded to prevent GitHub secret scanner false-positives)
     var pool = [
         "ZjE1YWFmOWNmMDVmMTRlY2UzMDliNjhjYWQwMWNlMjU=",
         "NDM5YzQ3OGE3NzFmMzVjMDUwMjJmOWZlYWJjY2EwMWM="
@@ -54,8 +54,9 @@ function getTmdbKey() {
 }
 
 // ── Multi-Tier In-Memory Caches ───────────────────────────────────────────────
-var cdnCache = {};    // driveId → direct CDN URL (0ms hot playback)
-var gxUrlCache = {};  // driveId → gamerxyt URL (skips HubCloud page)
+var cdnCache = {};
+var gxUrlCache = {};
+var searchCache = {}; // searchKey → postUrl
 
 // ── Settings & Sorting ────────────────────────────────────────────────────────
 
@@ -111,7 +112,6 @@ function resolveSettings(customSettings) {
     return { sortBy: sortBy };
 }
 
-// Generates an invisible zero-width sort prefix for Nuvio's internal alphabetical sorter
 function getInvertedSortTag(score, maxScore) {
     maxScore = maxScore || 999999;
     var val = Math.max(0, parseInt(score, 10) || 0);
@@ -161,10 +161,12 @@ function getStreams(tmdbId, mediaType, season, episode) {
         })
         .then(function(data) {
             var item = data;
+            var imdbId = "";
             if (isImdb) {
                 var results = type === "tv" ? (data.tv_results || []) : (data.movie_results || []);
                 if (!results.length) results = (data.movie_results || []).concat(data.tv_results || []);
                 item = results[0] || {};
+                imdbId = cleanId;
             }
             var title = item.title || item.name || "";
             var rawDate = item.release_date || item.first_air_date || "";
@@ -172,12 +174,14 @@ function getStreams(tmdbId, mediaType, season, episode) {
             var runtime = null;
             if (type === "tv") {
                 runtime = (item.episode_run_time && item.episode_run_time[0]) || null;
+                imdbId = imdbId || (item.external_ids && item.external_ids.imdb_id) || "";
             } else {
                 runtime = item.runtime || null;
+                imdbId = imdbId || item.imdb_id || "";
             }
             if (!title) { console.log("[4khdhub] TMDB no title"); return []; }
-            console.log("[4khdhub] " + title + " (" + year + ") runtime=" + runtime + "min");
-            return scrape4KHDHub(title, year, type, sea, ep, runtime);
+            console.log("[4khdhub] " + title + " (" + year + ") runtime=" + runtime + "min imdb=" + imdbId);
+            return scrape4KHDHub(title, year, type, sea, ep, runtime, imdbId);
         })
         .catch(function(e) {
             console.log("[4khdhub] TMDB host " + tmdbHosts[idx] + " failed: " + e.message + " — trying next");
@@ -190,45 +194,101 @@ function getStreams(tmdbId, mediaType, season, episode) {
 
 // ── Scrape 4khdhub.one ────────────────────────────────────────────────────────
 
-function scrape4KHDHub(title, year, type, season, episode, runtime) {
-    // Clean title for search (replace & with space, strip punctuation)
+function scrape4KHDHub(title, year, type, season, episode, runtime, imdbId) {
     var cleanTitle = title.replace(/&/g, "and").replace(/[^a-zA-Z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
-    var query = cleanTitle + (type === "tv" ? " Season " + season : (year ? " " + year : ""));
-    var searchUrl = BASE_URL + "/?s=" + encodeURIComponent(query);
-    console.log("[4khdhub] search: " + searchUrl);
+    var searchCacheKey = cleanTitle + "|" + year + "|" + type + "|" + season;
+    
+    if (searchCache[searchCacheKey]) {
+        console.log("[4khdhub] search cache hit: " + searchCache[searchCacheKey]);
+        return fetchText(searchCache[searchCacheKey]).then(function(postHtml) {
+            return processPostPage(postHtml, searchCache[searchCacheKey], type, season, episode, title, runtime);
+        });
+    }
 
-    return fetchText(searchUrl)
-    .then(function(html) {
-        var postUrl = findBestPostUrl(html, title, year, type, season);
-        if (!postUrl) {
-            // Fallback: search with just the clean title without year
-            if (year && cleanTitle.length > 2) {
-                var fallbackUrl = BASE_URL + "/?s=" + encodeURIComponent(cleanTitle);
-                console.log("[4khdhub] fallback search: " + fallbackUrl);
-                return fetchText(fallbackUrl).then(function(fallbackHtml) {
-                    var postUrl2 = findBestPostUrl(fallbackHtml, title, year, type, season);
-                    if (!postUrl2) {
-                        console.log("[4khdhub] no matching post found");
-                        return [];
-                    }
-                    console.log("[4khdhub] post: " + postUrl2);
-                    return fetchText(postUrl2).then(function(postHtml) {
-                        return processPostPage(postHtml, postUrl2, type, season, episode, title, runtime);
-                    });
-                });
-            }
-            console.log("[4khdhub] no matching post found");
+    // Search strategies in order of preference
+    var strategies = [];
+    
+    // Strategy 1: IMDB ID search (most reliable)
+    if (imdbId) {
+        strategies.push({
+            name: "imdb",
+            url: BASE_URL + "/?s=" + encodeURIComponent(imdbId)
+        });
+    }
+    
+    // Strategy 2: Title + Year
+    if (year) {
+        strategies.push({
+            name: "title_year",
+            url: BASE_URL + "/?s=" + encodeURIComponent(cleanTitle + " " + year)
+        });
+    }
+    
+    // Strategy 3: Title + Season (for TV)
+    if (type === "tv") {
+        strategies.push({
+            name: "title_season",
+            url: BASE_URL + "/?s=" + encodeURIComponent(cleanTitle + " Season " + season)
+        });
+    }
+    
+    // Strategy 4: Title only
+    strategies.push({
+        name: "title",
+        url: BASE_URL + "/?s=" + encodeURIComponent(cleanTitle)
+    });
+
+    // Strategy 5: WP REST API search
+    strategies.push({
+        name: "wp_api",
+        url: BASE_URL + "/wp-json/wp/v2/posts?search=" + encodeURIComponent(cleanTitle + (year ? " " + year : "")) + "&per_page=20"
+    });
+
+    var strategyIndex = 0;
+
+    function tryNextStrategy() {
+        if (strategyIndex >= strategies.length) {
+            console.log("[4khdhub] all search strategies failed");
             return [];
         }
-        console.log("[4khdhub] post: " + postUrl);
-        return fetchText(postUrl).then(function(postHtml) {
-            return processPostPage(postHtml, postUrl, type, season, episode, title, runtime);
+        var strategy = strategies[strategyIndex++];
+        console.log("[4khdhub] search strategy [" + strategy.name + "]: " + strategy.url);
+
+        return fetchText(strategy.url)
+        .then(function(html) {
+            if (!html) return tryNextStrategy();
+
+            var postUrl = null;
+            
+            if (strategy.name === "wp_api") {
+                try {
+                    var posts = JSON.parse(html);
+                    if (posts && posts.length > 0) {
+                        postUrl = posts[0].link;
+                    }
+                } catch(e) {}
+            } else {
+                postUrl = findBestPostUrl(html, title, year, type, season);
+            }
+
+            if (!postUrl) {
+                console.log("[4khdhub] strategy [" + strategy.name + "] no post found");
+                return tryNextStrategy();
+            }
+
+            console.log("[4khdhub] post found: " + postUrl);
+            searchCache[searchCacheKey] = postUrl;
+            return fetchText(postUrl).then(function(postHtml) {
+                return processPostPage(postHtml, postUrl, type, season, episode, title, runtime);
+            });
+        })
+        .catch(function(e) {
+            console.log("[4khdhub] strategy [" + strategy.name + "] error: " + e.message);
+            return tryNextStrategy();
         });
-    })
-    .catch(function(e) {
-        console.error("[4khdhub] scrape error: " + e.message);
-        return [];
-    });
+    }
+
+    return tryNextStrategy();
 }
 
 function absoluteUrl(url, base) {
@@ -246,7 +306,7 @@ function absoluteUrl(url, base) {
     }
 }
 
-// ── Search result matching (Regex without Cheerio) ────────────────────────────
+// ── Search result matching (Improved) ─────────────────────────────────────────
 
 function findBestPostUrl(html, title, year, type, season) {
     var normTitle = norm(title);
@@ -264,57 +324,82 @@ function findBestPostUrl(html, title, year, type, season) {
         var innerHtml = m[2];
         var text = decodeEntities(innerHtml.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim());
 
-        if (seen[href] || href.indexOf("4khdhub.one") === -1) continue;
+        if (seen[href]) continue;
+        if (href.indexOf("4khdhub.one") === -1) continue;
         if (href.indexOf("/category/") !== -1 || href.indexOf("/tag/") !== -1 ||
             href.indexOf("/page/") !== -1 || href.indexOf("?s=") !== -1 ||
             href.indexOf("/author/") !== -1 || href === BASE_URL || href === BASE_URL + "/") continue;
-
         if (/\.(css|js|png|jpg|jpeg|gif|svg|webp|ico)($|\?)/i.test(href)) continue;
 
         seen[href] = true;
-        // Text can be in the anchor or in the href slug
         var slugText = href.split("/").filter(Boolean).pop().replace(/[-_+]/g, " ");
-        candidates.push({ url: href, title: text || slugText });
+        candidates.push({ url: href, title: text || slugText, slug: slugText });
     }
+
+    if (candidates.length === 0) return null;
 
     var best = null;
     var bestScore = -1;
 
+    // Tokenize title for fuzzy matching
+    var tokens = normTitle.split(/\s+/).filter(function(t) { return t.length > 1; });
+    
+    // If title is long, create a condensed version (first letters)
+    var condensedTitle = tokens.map(function(t) { return t.charAt(0); }).join("");
+
     for (var i = 0; i < candidates.length; i++) {
         var c = candidates[i];
-        var normPost = norm(c.title + " " + c.url);
+        var normPost = norm(c.title + " " + c.slug);
+        var normSlug = norm(c.slug);
         var score = 0;
 
-        // Title token overlap
-        var tokens = normTitle.split(/\s+/).filter(function(t) { return t.length > 1; });
+        // Exact title match in slug or title
+        if (normSlug.indexOf(normTitle) !== -1 || normPost.indexOf(normTitle) !== -1) {
+            score += 200;
+        }
+        
+        // Condensed title match (e.g., "the matrix" → "tm")
+        if (condensedTitle.length >= 2) {
+            var condensedSlug = normSlug.replace(/\s/g, "");
+            if (condensedSlug.indexOf(condensedTitle) !== -1) {
+                score += 100;
+            }
+        }
+
+        // Token overlap
         var matched = tokens.filter(function(t) {
-            return new RegExp("(?:^|\\s)" + t + "(?:\\s|$)", "i").test(normPost);
+            return new RegExp("(?:^|[\\s-])" + t + "(?:[\\s-]|$)", "i").test(normPost);
         });
-        score += (matched.length / Math.max(tokens.length, 1)) * 100;
+        score += (matched.length / Math.max(tokens.length, 1)) * 150;
 
         // Year match
-        var ym = (c.title + " " + c.url).match(/\b(19|20)\d{2}\b/);
+        var ym = (c.title + " " + c.slug).match(/\b(19|20)\d{2}\b/);
         var postYear = ym ? parseInt(ym[0], 10) : 0;
         if (targetYear && postYear) {
-            if (postYear === targetYear) score += 35;
-            else if (Math.abs(postYear - targetYear) > 1) score -= 40;
+            if (postYear === targetYear) score += 80;
+            else if (Math.abs(postYear - targetYear) > 1) score -= 100;
         }
 
         // Season match for TV
         if (type === "tv" && targetSeason) {
-            var sm = (c.title + " " + c.url).match(/\b(?:season\s*0*(\d+)|s0*(\d+))\b/i);
+            var sm = (c.title + " " + c.slug).match(/\b(?:season\s*0*(\d+)|s0*(\d+))\b/i);
             var postSeason = sm ? parseInt(sm[1] || sm[2], 10) : 0;
-            if (postSeason === targetSeason) score += 40;
-            else if (postSeason && postSeason !== targetSeason) score -= 60;
+            if (postSeason === targetSeason) score += 100;
+            else if (postSeason && postSeason !== targetSeason) score -= 150;
         }
 
-        if (score >= 40 && score > bestScore) {
+        // Bonus for series/movie type match in slug
+        if (type === "tv" && /\bseries\b/i.test(normSlug)) score += 30;
+        if (type === "movie" && /\bmovie\b/i.test(normSlug)) score += 30;
+
+        if (score > bestScore) {
             bestScore = score;
             best = c.url;
         }
     }
 
-    return best;
+    console.log("[4khdhub] best post score: " + bestScore);
+    return bestScore >= 40 ? best : null;
 }
 
 // ── Process post page & extract download hubs ────────────────────────────────
@@ -359,7 +444,7 @@ function processPostPage(html, postUrl, type, season, episode, showTitle, runtim
             }
         }
 
-        // ── تعديل He: فقط 1080p + اختيار الأكبر حجماً ─────────────────────────────
+        // ── تعديل He: فقط 1080p + ترتيب تنازلي حسب الحجم (fallback للسيرفرات) ────
         out = out.filter(function(s) {
             return (s.quality || "").toUpperCase() === "1080P";
         });
@@ -368,16 +453,14 @@ function processPostPage(html, postUrl, type, season, episode, showTitle, runtim
             out.sort(function(a, b) {
                 return parseSize(b._sizeRaw) - parseSize(a._sizeRaw);
             });
-            // نرجع فقط الأكبر (الأسرع عادةً)
-            out = [out[0]];
         }
 
-        console.log("[4khdhub] final streams (1080p only, largest): " + out.length);
+        console.log("[4khdhub] final streams (1080p only, sorted by size): " + out.length);
         return out;
     });
 }
 
-// ── Extract download buttons from post page (Regex / No Cheerio) ───────────────
+// ── Extract download buttons from post page (Improved Regex) ─────────────────
 
 function extractDownloadLinks(html, isTv, season, episode) {
     var items = [];
@@ -391,17 +474,30 @@ function extractDownloadLinks(html, isTv, season, episode) {
 
         var epPatterns = [
             new RegExp("(?:Episode|Ep|E)[\\s.-]*0*" + targetEp + "\\b", "i"),
-            new RegExp("S" + sPad + "[\\s.-]*E" + ePad, "i")
+            new RegExp("S" + sPad + "[\\s.-]*E" + ePad, "i"),
+            new RegExp("Season\\s*0*" + targetSea + "\\s*Episode\\s*0*" + targetEp, "i")
         ];
+
+        // Try to find episode-specific section first
+        var episodeSection = html;
+        var epSectionStart = html.indexOf("S" + sPad + "E" + ePad);
+        if (epSectionStart < 0) {
+            epSectionStart = html.indexOf("Season " + targetSea);
+        }
+        if (epSectionStart >= 0) {
+            var epSectionEnd = html.indexOf("Season " + (targetSea + 1), epSectionStart);
+            if (epSectionEnd < 0) epSectionEnd = html.length;
+            episodeSection = html.substring(epSectionStart, epSectionEnd);
+        }
 
         var aRe = /<a\s+[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
         var m;
-        while ((m = aRe.exec(html)) !== null) {
+        while ((m = aRe.exec(episodeSection)) !== null) {
             var href = m[1];
             var btnText = decodeEntities(m[2].replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim());
 
-            var startIdx = Math.max(0, m.index - 600);
-            var context = html.substring(startIdx, m.index + 200).replace(/<[^>]+>/g, " ");
+            var startIdx = Math.max(0, m.index - 800);
+            var context = episodeSection.substring(startIdx, m.index + 300).replace(/<[^>]+>/g, " ");
 
             var isTargetEpisode = false;
             for (var p = 0; p < epPatterns.length; p++) {
@@ -423,10 +519,11 @@ function extractDownloadLinks(html, isTv, season, episode) {
                 url: href,
                 label: label,
                 size: size,
-                rawLabel: context.slice(0, 150)
+                rawLabel: context.slice(0, 200)
             });
         }
     } else {
+        // For movies, extract ALL hub URLs from the page
         var aRe = /<a\s+[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
         var m;
         while ((m = aRe.exec(html)) !== null) {
@@ -437,8 +534,8 @@ function extractDownloadLinks(html, isTv, season, episode) {
             if (seenUrls[href]) continue;
             seenUrls[href] = true;
 
-            var startIdx = Math.max(0, m.index - 400);
-            var context = html.substring(startIdx, m.index + 100).replace(/<[^>]+>/g, " ");
+            var startIdx = Math.max(0, m.index - 1000);
+            var context = html.substring(startIdx, m.index + 300).replace(/<[^>]+>/g, " ");
 
             var label = extractQualityLabel(context + " " + btnText);
             var size  = extractSize(context + " " + btnText);
@@ -447,7 +544,30 @@ function extractDownloadLinks(html, isTv, season, episode) {
                 url: href,
                 label: label,
                 size: size,
-                rawLabel: context.slice(0, 150)
+                rawLabel: context.slice(0, 200)
+            });
+        }
+    }
+
+    // If no links found for TV, try searching in full HTML without episode filtering
+    if (isTv && items.length === 0) {
+        console.log("[4khdhub] no episode-specific links, trying full page extraction");
+        var aRe = /<a\s+[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
+        var m;
+        while ((m = aRe.exec(html)) !== null) {
+            var href = m[1];
+            if (!isHubUrl(href)) continue;
+            if (seenUrls[href]) continue;
+            seenUrls[href] = true;
+
+            var startIdx = Math.max(0, m.index - 500);
+            var context = html.substring(startIdx, m.index + 200).replace(/<[^>]+>/g, " ");
+
+            items.push({
+                url: href,
+                label: extractQualityLabel(context),
+                size: extractSize(context),
+                rawLabel: context.slice(0, 200)
             });
         }
     }
@@ -507,7 +627,7 @@ function resolveHubCloud(startUrl) {
         // Check if CDN link is already directly present on the HubCloud page
         var directList = extractAllCdnsFromBridgePage(html);
         if (directList.length) {
-            var selectedDirect = directList.slice(0, 2);
+            var selectedDirect = directList.slice(0, 3);
             if (driveId) cdnCache[driveId] = selectedDirect;
             return selectedDirect;
         }
@@ -524,7 +644,7 @@ function resolveHubCloud(startUrl) {
             .then(function(html2) {
                 var cdnList = extractAllCdnsFromBridgePage(html2);
                 if (cdnList.length) {
-                    var selected = cdnList.slice(0, 2);
+                    var selected = cdnList.slice(0, 3);
                     if (driveId) cdnCache[driveId] = selected;
                     return selected;
                 }
@@ -532,10 +652,10 @@ function resolveHubCloud(startUrl) {
             });
         }
 
-        // Bridge URL Discovery (Handles gamerxyt, techmody, fastdl, or ANY bridge domain)
+        // Bridge URL Discovery
         var bridgeUrl = null;
 
-        // 1. Base64 x-href on download buttons or anchors (any domain)
+        // 1. Base64 x-href
         var b64Match = html.match(/(?:id=["']download["'][^>]+x-href|x-href[^>]+id=["']download["'])[^>]*=["']([A-Za-z0-9+/=]{20,})["']/i) ||
                        html.match(/x-href=["']([A-Za-z0-9+/=]{20,})["']/i) ||
                        html.match(/data-href=["']([A-Za-z0-9+/=]{20,})["']/i);
@@ -548,7 +668,7 @@ function resolveHubCloud(startUrl) {
             } catch(e) {}
         }
 
-        // 2. JS variable redirection (var url = "..." / download_url = "...")
+        // 2. JS variable redirection
         if (!bridgeUrl) {
             var jsMatch = html.match(/var\s+(?:url|download_url|redirect_url|link)\s*=\s*['"](https?:\/\/[^'"]+)['"]/i) ||
                           html.match(/window\.location(?:\.href)?\s*=\s*['"](https?:\/\/[^'"]+)['"]/i);
@@ -557,7 +677,7 @@ function resolveHubCloud(startUrl) {
             }
         }
 
-        // 3. Anchor button scan (id="download" or class="btn" or hubcloud.php / download.php / bridge)
+        // 3. Anchor button scan
         if (!bridgeUrl) {
             var btnMatch = html.match(/<a\s+[^>]*id=["']download["'][^>]*href=["'](https?:\/\/[^"']+)["']/i) ||
                            html.match(/<a\s+[^>]*class=["'][^"']*btn[^"']*["'][^>]*href=["'](https?:\/\/[^"']*(?:hubcloud\.php|download\.php|drive\.php)[^"']*)["']/i) ||
@@ -567,7 +687,7 @@ function resolveHubCloud(startUrl) {
             }
         }
 
-        // 4. Token-path relative fallback (older HubCloud templates)
+        // 4. Token-path relative fallback
         if (!bridgeUrl) {
             var tokenPathMatch = html.match(/var\s+url\s*=\s*['"](\/drive\/[^'"]+token=[^'"]+)['"]/i) ||
                                  html.match(/href=["'](\/drive\/[^'"]+token=[^'"]+)["']/i);
@@ -584,7 +704,7 @@ function resolveHubCloud(startUrl) {
             .then(function(html2) {
                 var cdnList = extractAllCdnsFromBridgePage(html2);
                 if (cdnList.length) {
-                    var selected = cdnList.slice(0, 2);
+                    var selected = cdnList.slice(0, 3);
                     if (driveId) cdnCache[driveId] = selected;
                     return selected;
                 }
@@ -601,7 +721,7 @@ function resolveHubCloud(startUrl) {
     });
 }
 
-// —— Bridge Page CDN Extractor (Buzz + R2 + Workers.dev + PixelDrain + S3) ────
+// —— Bridge Page CDN Extractor —————————————————───────────────────────────────
 
 function extractAllCdnsFromBridgePage(html) {
     if (!html || typeof html !== "string") return [];
@@ -645,7 +765,7 @@ function extractAllCdnsFromBridgePage(html) {
         }
     }
 
-    // Priority 3: PixelDrain (Convert /u/ -> /api/file/)
+    // Priority 3: PixelDrain
     var pxlMatch = html.match(/var\s+pxl\s*=\s*["']https:\/\/pixeldrain\.[a-z0-9.-]+\/u\/([A-Za-z0-9_-]+)["']/i) ||
                    html.match(/href=["']https:\/\/pixeldrain\.[a-z0-9.-]+\/u\/([A-Za-z0-9_-]+)["']/i);
     if (pxlMatch && pxlMatch[1]) {
@@ -660,12 +780,11 @@ function extractCdnFromBridgePage(html) {
     return all.length ? all[0] : null;
 }
 
-// —— HubDrive Resolver (Extracts HubCloud link across any TLD) ─────────────────
+// —— HubDrive Resolver —────────────────────────────────────────────────────────
 
 function resolveHubDrive(hubdriveUrl) {
     return fetchText(hubdriveUrl, { "Referer": BASE_URL + "/" })
     .then(function(html) {
-        // TLD-agnostic match for HubCloud drive link
         var hcMatch = html.match(/href=["'](https?:\/\/(?:[a-z0-9.-]*hubcloud|[a-z0-9.-]*hub-cloud)\.[a-z0-9.-]+\/drive\/[A-Za-z0-9_\-]+)["']/i) ||
                       html.match(/href=["'](https?:\/\/[^"']*hubcloud\.[^"']+)["']/i);
         if (hcMatch && hcMatch[1]) {
@@ -679,7 +798,7 @@ function resolveHubDrive(hubdriveUrl) {
     });
 }
 
-// —— HubCDN Resolver (TLD-Agnostic) ────────────────────────────────────────────
+// —— HubCDN Resolver —──────────────────────────────────────────────────────────
 
 function resolveHubCdn(hubcdnUrl) {
     return fetchText(hubcdnUrl, { "Referer": BASE_URL + "/" })
@@ -717,7 +836,7 @@ function extractFirstCdnUrl(html) {
     return m ? stripToken(m[1]) : null;
 }
 
-// ── Stream Builder (Enhanced with bitrate & fps) ─────────────────────────────
+// ── Stream Builder ────────────────────────────────────────────────────────────
 
 var AUDIO_TABLE = [
     [/ddp.?51.*truehd.*71|truehd.*71.*ddp.?51/i, "DDP 5.1 + TrueHD 7.1"],
