@@ -1,5 +1,6 @@
 // a111477 — 111477 provider for Nuvio (self-contained, no TMDB lookup)
 // Direct fetch from 111477 service, filters 1080p only, extracts rich metadata.
+// Info displayed below server name (multi-line name like 4KHDHub).
 
 var SERVICE_ORIGIN = 'https://st.111477.xyz';
 var DEFAULT_HOST = 'https://a.111477.xyz/';
@@ -105,7 +106,7 @@ function parseLangs(title) {
   return langs.length ? langs.join(' + ') : '';
 }
 
-// ── Build stream object with full metadata ────────────────────────────────
+// ── Build stream object with multi-line name (details below) ──────────────
 function makeStream(it) {
   var title = it.title || it.name || '111477';
   var url = it.url;
@@ -121,14 +122,19 @@ function makeStream(it) {
   var source = parseSource(title);
   var langs = parseLangs(title);
 
-  var parts = [];
-  if (source) parts.push(source);
-  if (codec) parts.push(codec);
-  if (audio) parts.push(audio);
-  if (langs) parts.push(langs);
+  // السطر الرئيسي: اسم المزود + الجودة + الحجم
+  var mainLine = ['111477', quality, size].filter(Boolean).join(' • ');
 
-  // نبني الاسم الكامل مع كل المعلومات
-  var fullName = ['111477', quality, size].concat(parts).filter(Boolean).join(' • ');
+  // سطر التفاصيل تحت
+  var details = [];
+  if (source) details.push(source);
+  if (codec) details.push(codec);
+  if (audio) details.push(audio);
+  if (langs) details.push(langs);
+  var detailsLine = details.join(' • ');
+
+  // الاسم متعدد الأسطر: الرئيسي فوق والتفاصيل تحت
+  var fullName = detailsLine ? (mainLine + '\n' + detailsLine) : mainLine;
 
   return {
     name: fullName,
