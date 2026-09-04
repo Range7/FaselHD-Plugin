@@ -122,11 +122,12 @@ function makeStream(it) {
   if (langs) details.push(langs);
   var detailsLine = details.join(' • ');
 
+  // السطر الأول + سطر التفاصيل
   var fullName = detailsLine ? (mainLine + '\n' + detailsLine) : mainLine;
 
   return {
     name: fullName,
-    title: fullName,
+    title: fullName, // <-- كلاهما متعدد الأسطر
     url: url,
     quality: quality,
     headers: HEADERS,
