@@ -21,7 +21,8 @@ function getStreams(tmdbId, mediaType, season, episode) {
             const url = it && it.url;
             if (!url || !String(url).startsWith("http") || seen.has(url)) continue;
             const label = it.title || it.name || "111477";
-            const quality = parseQuality(label);
+            let quality = parseQuality(label);
+            if (quality === "Auto" || quality === "Unknown") quality = "1080p";
             if (quality !== "1080p") continue;
             seen.add(url);
             out.push({
