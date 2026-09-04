@@ -1,5 +1,7 @@
 // 111477 — Stremio addon (st.111477.xyz) with a base64url-encoded config token.
 // Ported from PlayTorrioV3 lib/services/scraper/sites/a111477.dart
+// Modified: extract ALL 1080p streams with full original metadata.
+
 const { resolveMeta } = require('./_lib/tmdb');
 const { base64UrlEncode } = require('./_lib/crypto');
 const { dedupByUrl, sortByQuality, parseQuality } = require('./_lib/dedup');
@@ -42,14 +44,30 @@ async function getStreams(tmdbId, mediaType, season, episode) {
         const data = await res.json();
         const streams = data && data.streams;
         if (!Array.isArray(streams)) continue;
+
         for (const it of streams) {
           const url = it && it.url;
           if (!url || !String(url).startsWith('http') || seen.has(url)) continue;
-          seen.add(url);
+
           const label = it.title || it.name || '111477';
-          out.push({ name: it.name || '111477', title: label, url, quality: parseQuality(label), headers: HEADERS });
+          const quality = parseQuality(label);
+
+          // فقط جودة 1080p
+          if (quality !== '1080p') continue;
+
+          seen.add(url);
+
+          // نحتفظ بكل الحقول الأصلية + الجودة + الترويسات
+          out.push({
+            ...it,               // كل معلومات السيرفر الأصلية
+            name: it.name || '111477',
+            title: label,
+            url,
+            quality,
+            headers: HEADERS,
+          });
         }
-        if (streams.length) break;
+        // بدون break: نجمع من كل المعرفات حتى نضمن كل سيرفرات 1080p
       } catch (e) {}
     }
   } catch (e) {}
