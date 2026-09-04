@@ -1,11 +1,12 @@
-// build.js — bundle each src provider into a single Hermes-safe file in
+// build.js — bundle only the 111477 provider into a single Hermes-safe file in
 // providers/, matching the Nuvio shipped format: CommonJS, async transpiled to
 // generators (esbuild target=es2015), _lib requires inlined.
 const esbuild = require('esbuild');
 const fs = require('fs');
 
+// Only 111477 provider is needed now.
 const PROVIDERS = [
-  '111477'
+  'a111477', // 111477 provider
 ];
 
 fs.mkdirSync('providers', { recursive: true });
