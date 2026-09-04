@@ -1,10 +1,11 @@
-// a111477 Provider for Nuvio — Complete with Rich Metadata
+// a111477 Provider for Nuvio — Complete with Rich Metadata + Reliability Fixes
 // Based on ahmedelkassrawy/nuvio-providers actual implementation
 // Enhanced with 4KHDHub-style rich metadata display
+// Reliability fixes: retry logic, longer timeout, fallback IDs, cache TTL
 // Hermes-safe: no async/await, no const/let, no arrow functions, no URL constructor
 
 // ═════════════════════════════════════════════════════════════════════════════
-// INLINE LIBRARIES (self-contained, no external requires)
+// CONFIG
 // ═════════════════════════════════════════════════════════════════════════════
 
 var TMDB_API_KEY = "b3556f3b206e16f82df4d1f6fd4545e6";
@@ -13,13 +14,30 @@ var TMDB_PROXY = "https://db.speedracelight.com/3";
 var UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 var SERVICE_ORIGIN = "https://st.111477.xyz";
 var DEFAULT_HOST = "https://a.111477.xyz/";
+var DEBUG = true;
+var META_CACHE_TTL = 30 * 60 * 1000; // 30 minutes
 
 var _metaCache = {};
 var _tmdbPool = [TMDB_DIRECT, TMDB_PROXY];
 
-// ── HTTP with timeout ───────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════════════════════
+// LOGGING
+// ═════════════════════════════════════════════════════════════════════════════
+
+function log(msg) {
+    if (DEBUG) console.log("[a111477] " + msg);
+}
+
+function logError(msg) {
+    console.error("[a111477] " + msg);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// HTTP with timeout + retry
+// ═════════════════════════════════════════════════════════════════════════════
+
 function fetchT(url, opts, ms) {
-    ms = ms || 8000;
+    ms = ms || 12000; // increased from 8000 to 12000
     return Promise.race([
         fetch(url, opts || {}),
         new Promise(function(_, reject) {
@@ -28,7 +46,29 @@ function fetchT(url, opts, ms) {
     ]);
 }
 
-// ── Crypto (base64url) ──────────────────────────────────────────────────────
+function fetchWithRetry(url, opts, maxRetries) {
+    maxRetries = maxRetries || 3;
+    function attempt(n) {
+        return fetchT(url, opts, 12000)
+        .catch(function(e) {
+            if (n >= maxRetries) {
+                log("fetch failed after " + maxRetries + " retries: " + e.message);
+                throw e;
+            }
+            var delay = 1000 * n;
+            log("retry " + (n + 1) + "/" + maxRetries + " after " + delay + "ms");
+            return new Promise(function(r) { setTimeout(r, delay); }).then(function() {
+                return attempt(n + 1);
+            });
+        });
+    }
+    return attempt(1);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// CRYPTO (base64url)
+// ═════════════════════════════════════════════════════════════════════════════
+
 var B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 function base64Encode(input) {
@@ -50,20 +90,32 @@ function base64UrlEncode(input) {
     return base64Encode(input).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
-// ── TMDB Metadata Resolution ────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════════════════════
+// TMDB METADATA with TTL cache
+// ═════════════════════════════════════════════════════════════════════════════
+
 function resolveMeta(tmdbId, mediaType) {
     var kind = mediaType === "tv" ? "tv" : "movie";
     var ck = kind + ":" + tmdbId;
-    if (_metaCache[ck]) return Promise.resolve(_metaCache[ck]);
+    var cached = _metaCache[ck];
+    if (cached && cached._time && (Date.now() - cached._time < META_CACHE_TTL)) {
+        log("meta cache hit for " + ck);
+        return Promise.resolve(cached.data);
+    }
 
     function tryHost(idx) {
-        if (idx >= _tmdbPool.length) return Promise.resolve(null);
+        if (idx >= _tmdbPool.length) {
+            log("TMDB all hosts failed for " + ck);
+            return Promise.resolve(null);
+        }
         var base = _tmdbPool[idx];
         var withKey = base.indexOf("api.themoviedb.org") !== -1;
         var keyParam = withKey ? "&api_key=" + TMDB_API_KEY : "";
         var url = base + "/" + kind + "/" + tmdbId + "?append_to_response=external_ids" + keyParam;
 
-        return fetchT(url, { headers: { "User-Agent": UA, "Accept": "application/json" } }, 6000)
+        log("TMDB trying host " + (idx + 1) + "/" + _tmdbPool.length + ": " + base);
+
+        return fetchT(url, { headers: { "User-Agent": UA, "Accept": "application/json" } }, 12000)
         .then(function(r) {
             if (!r.ok) throw new Error("HTTP " + r.status);
             return r.json();
@@ -74,16 +126,23 @@ function resolveMeta(tmdbId, mediaType) {
             var year = dateStr ? parseInt(String(dateStr).slice(0, 4), 10) : null;
             var imdbId = (j.external_ids && j.external_ids.imdb_id) || j.imdb_id || null;
             var meta = { title: title, year: year, imdbId: imdbId };
-            _metaCache[ck] = meta;
+            _metaCache[ck] = { data: meta, _time: Date.now() };
+            log("meta resolved: title=" + title + " year=" + year + " imdb=" + imdbId);
             return meta;
         })
-        .catch(function() { return tryHost(idx + 1); });
+        .catch(function(e) {
+            log("TMDB host " + (idx + 1) + " failed: " + e.message);
+            return tryHost(idx + 1);
+        });
     }
 
     return tryHost(0);
 }
 
-// ── Dedup & Sort ─────────────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════════════════════
+// DEDUP & SORT
+// ═════════════════════════════════════════════════════════════════════════════
+
 function dedupByUrl(streams) {
     var seen = {};
     var out = [];
@@ -114,7 +173,10 @@ function parseQuality(s) {
     return "Auto";
 }
 
-// ── Config Token Builder ────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════════════════════
+// CONFIG TOKEN BUILDER
+// ═════════════════════════════════════════════════════════════════════════════
+
 function manifestBaseUrl(host, sort, limit) {
     host = host || DEFAULT_HOST;
     sort = sort || "file-desc";
@@ -181,8 +243,6 @@ function extractFps(text) {
 function pickHost(url) {
     if (!url) return "Direct";
     var low = url.toLowerCase();
-
-    // Extract hostname using regex (Hermes-safe)
     var hostMatch = low.match(/^https?:\/\/([^\/?:#]+)/);
     var hostname = hostMatch ? hostMatch[1] : "";
 
@@ -405,7 +465,7 @@ function enrichStream(it, meta) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// MAIN getStreams (actual a111477 logic)
+// MAIN getStreams with fallback + retry
 // ═════════════════════════════════════════════════════════════════════════════
 
 function getStreams(tmdbId, mediaType, season, episode) {
@@ -415,74 +475,89 @@ function getStreams(tmdbId, mediaType, season, episode) {
     var sea = parseInt(season, 10) || 1;
     var ep = parseInt(episode, 10) || 1;
 
-    console.log("[a111477] " + (isTv ? "tv" : "movie") + " tmdb=" + tmdbId + (isTv ? " S" + sea + "E" + ep : ""));
+    log((isTv ? "tv" : "movie") + " tmdb=" + tmdbId + (isTv ? " S" + sea + "E" + ep : ""));
 
+    // Try to resolve metadata first, but always have tmdb:id as fallback
     return resolveMeta(tmdbId, mediaType)
     .then(function(meta) {
         var ids = [];
         if (meta && meta.imdbId && meta.imdbId.indexOf("tt") === 0) {
             ids.push(meta.imdbId);
+            log("using imdb id: " + meta.imdbId);
         }
         ids.push("tmdb:" + tmdbId);
-
-        var addonBase = manifestBaseUrl();
-        console.log("[a111477] addonBase: " + addonBase);
-        console.log("[a111477] trying IDs: " + ids.join(", "));
-
-        function tryId(idx) {
-            if (idx >= ids.length) return Promise.resolve();
-            var id = ids[idx];
-            var epUrl = isTv
-                ? addonBase + "/stream/series/" + id + ":" + sea + ":" + ep + ".json"
-                : addonBase + "/stream/movie/" + id + ".json";
-
-            console.log("[a111477] fetching: " + epUrl);
-
-            return fetchT(epUrl, { headers: { "User-Agent": UA, "Accept": "application/json" } }, 10000)
-            .then(function(r) {
-                if (!r.ok) {
-                    console.log("[a111477] HTTP " + r.status + " for " + id);
-                    return tryId(idx + 1);
-                }
-                return r.json();
-            })
-            .then(function(data) {
-                if (!data || !data.streams || !Array.isArray(data.streams)) {
-                    console.log("[a111477] no streams for " + id);
-                    return tryId(idx + 1);
-                }
-                console.log("[a111477] " + data.streams.length + " raw streams from " + id);
-
-                for (var i = 0; i < data.streams.length; i++) {
-                    var it = data.streams[i];
-                    var url = it && it.url;
-                    if (!url || String(url).indexOf("http") !== 0 || seen[url]) continue;
-                    seen[url] = true;
-
-                    var enriched = enrichStream(it, meta);
-                    if (enriched) out.push(enriched);
-                }
-
-                if (data.streams.length > 0) {
-                    console.log("[a111477] success with ID: " + id);
-                    return Promise.resolve();
-                }
-                return tryId(idx + 1);
-            })
-            .catch(function(e) {
-                console.log("[a111477] error for " + id + ": " + e.message);
-                return tryId(idx + 1);
-            });
-        }
-
-        return tryId(0);
+        log("fallback tmdb id: tmdb:" + tmdbId);
+        return processIds(ids, isTv, sea, ep, out, seen);
     })
+    .catch(function(e) {
+        // If resolveMeta completely fails, still try with tmdb:id
+        log("resolveMeta failed entirely, trying direct tmdb id: " + e.message);
+        var ids = ["tmdb:" + tmdbId];
+        return processIds(ids, isTv, sea, ep, out, seen);
+    });
+}
+
+function processIds(ids, isTv, sea, ep, out, seen) {
+    var addonBase = manifestBaseUrl();
+    log("addonBase: " + addonBase);
+    log("trying IDs: " + ids.join(", "));
+
+    function tryId(idx) {
+        if (idx >= ids.length) {
+            log("all IDs exhausted");
+            return Promise.resolve();
+        }
+        var id = ids[idx];
+        var epUrl = isTv
+            ? addonBase + "/stream/series/" + id + ":" + sea + ":" + ep + ".json"
+            : addonBase + "/stream/movie/" + id + ".json";
+
+        log("fetching: " + epUrl);
+
+        return fetchWithRetry(epUrl, { headers: { "User-Agent": UA, "Accept": "application/json" } }, 3)
+        .then(function(r) {
+            if (!r.ok) {
+                log("HTTP " + r.status + " for " + id);
+                return tryId(idx + 1);
+            }
+            return r.json();
+        })
+        .then(function(data) {
+            if (!data || !data.streams || !Array.isArray(data.streams)) {
+                log("no streams array for " + id);
+                return tryId(idx + 1);
+            }
+            log(data.streams.length + " raw streams from " + id);
+
+            for (var i = 0; i < data.streams.length; i++) {
+                var it = data.streams[i];
+                var url = it && it.url;
+                if (!url || String(url).indexOf("http") !== 0 || seen[url]) continue;
+                seen[url] = true;
+
+                var enriched = enrichStream(it, {});
+                if (enriched) out.push(enriched);
+            }
+
+            if (data.streams.length > 0) {
+                log("success with ID: " + id);
+                return Promise.resolve();
+            }
+            return tryId(idx + 1);
+        })
+        .catch(function(e) {
+            log("error for " + id + ": " + e.message);
+            return tryId(idx + 1);
+        });
+    }
+
+    return tryId(0)
     .then(function() {
-        console.log("[a111477] total enriched streams: " + out.length);
+        log("total enriched streams: " + out.length);
         return sortByQuality(dedupByUrl(out));
     })
     .catch(function(e) {
-        console.error("[a111477] fatal error: " + e.message);
+        logError("fatal error: " + e.message);
         return [];
     });
 }
