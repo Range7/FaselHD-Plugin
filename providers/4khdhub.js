@@ -1,16 +1,6 @@
 /**
  * 4KHDHub Nuvio Provider
- *
- * Direct fastpath resolver without DOM parser (Cheerio-free)
- * Incorporates DirectResolver reverse-engineering breakthroughs:
- *   - HubCloud MD5 title hash shortcut
- *   - Token-free permanent static CDN caching
- *   - x-href Base64 decode for HubCloud download buttons
- *   - Buzz Family (.buzz) + R2 (.r2.dev) + Workers.dev + PixelDrain support
- *   - Multi-tier in-memory L0/L1 caching
- *   - Enhanced search (IMDB ID, WP REST API, multi-strategy fallback)
- *   - Rich stream metadata (codec, audio, HDR, source, bitrate, fps)
- *   - STRICT 1080p ONLY + Server health check + Fallback to working servers
+ * Enhanced search + 1080p only + Sorted by size (largest first)
  */
 
 var BASE_URL = "https://4khdhub.one";
@@ -53,12 +43,9 @@ function getTmdbKey() {
     return b64decode(pool[Math.floor(Math.random() * pool.length)]);
 }
 
-// ── Multi-Tier In-Memory Caches ───────────────────────────────────────────────
 var cdnCache = {};
 var gxUrlCache = {};
 var searchCache = {};
-
-// ── Settings & Sorting ────────────────────────────────────────────────────────
 
 function onSettings() {
     return [
@@ -125,8 +112,6 @@ function getInvertedSortTag(score, maxScore) {
     return chars.join("");
 }
 
-// ── Entry point ───────────────────────────────────────────────────────────────
-
 function getStreams(tmdbId, mediaType, season, episode) {
     var rawId = tmdbId;
     if (typeof tmdbId === "object" && tmdbId !== null) {
@@ -191,8 +176,6 @@ function getStreams(tmdbId, mediaType, season, episode) {
 
     return tryTmdb(0);
 }
-
-// ── Scrape 4khdhub.one ────────────────────────────────────────────────────────
 
 function scrape4KHDHub(title, year, type, season, episode, runtime, imdbId) {
     var cleanTitle = title.replace(/&/g, "and").replace(/[^a-zA-Z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
@@ -300,8 +283,6 @@ function absoluteUrl(url, base) {
     }
 }
 
-// ── Search result matching (Improved) ─────────────────────────────────────────
-
 function findBestPostUrl(html, title, year, type, season) {
     var normTitle = norm(title);
     var targetYear = year ? parseInt(year, 10) : 0;
@@ -387,8 +368,6 @@ function findBestPostUrl(html, title, year, type, season) {
     return bestScore >= 40 ? best : null;
 }
 
-// ── Process post page & extract download hubs ────────────────────────────────
-
 function processPostPage(html, postUrl, type, season, episode, showTitle, runtime) {
     var isTv = type === "tv";
     var settings = resolveSettings();
@@ -434,83 +413,17 @@ function processPostPage(html, postUrl, type, season, episode, showTitle, runtim
             return (s.quality || "").toUpperCase() === "1080P";
         });
 
-        // ترتيب تنازلي حسب الحجم
+        // ترتيب تنازلي حسب الحجم (الأكبر أولاً)
         if (out.length > 1) {
             out.sort(function(a, b) {
                 return parseSize(b._sizeRaw) - parseSize(a._sizeRaw);
             });
         }
 
-        // فحص السيرفرات وإرجاع الشغالة فقط
-        console.log("[4khdhub] checking " + out.length + " servers...");
-        var checkPromises = out.map(function(s) {
-            return isUrlWorking(s.url).then(function(ok) {
-                return ok ? s : null;
-            });
-        });
-
-        return Promise.all(checkPromises).then(function(results) {
-            var working = results.filter(Boolean);
-            console.log("[4khdhub] working servers: " + working.length);
-            return working;
-        });
+        console.log("[4khdhub] final streams (1080p only, sorted by size): " + out.length);
+        return out;
     });
 }
-
-// ── Server Health Check ───────────────────────────────────────────────────────
-
-function isUrlWorking(url) {
-    return new Promise(function(resolve) {
-        var controller = typeof AbortController !== "undefined" ? new AbortController() : null;
-        var timeout = setTimeout(function() {
-            if (controller) controller.abort();
-            resolve(false);
-        }, 8000);
-
-        var options = {
-            method: "GET",
-            headers: {
-                "User-Agent": UA,
-                "Range": "bytes=0-1023"
-            },
-            signal: controller ? controller.signal : undefined
-        };
-
-        fetch(url, options)
-        .then(function(r) {
-            clearTimeout(timeout);
-            // نعتبره شغال إذا رجع 200 أو 206
-            resolve(r.ok || r.status === 206);
-        })
-        .catch(function() {
-            clearTimeout(timeout);
-            // إذا HEAD/GET فشل، نجرب مرة ثانية بدون Range
-            if (controller) {
-                try { controller.abort(); } catch(e) {}
-            }
-            var controller2 = typeof AbortController !== "undefined" ? new AbortController() : null;
-            var timeout2 = setTimeout(function() {
-                if (controller2) controller2.abort();
-                resolve(false);
-            }, 5000);
-            fetch(url, {
-                method: "GET",
-                headers: { "User-Agent": UA },
-                signal: controller2 ? controller2.signal : undefined
-            })
-            .then(function(r2) {
-                clearTimeout(timeout2);
-                resolve(r2.ok || r2.status === 206);
-            })
-            .catch(function() {
-                clearTimeout(timeout2);
-                resolve(false);
-            });
-        });
-    });
-}
-
-// ── Extract download buttons from post page (Improved Regex) ─────────────────
 
 function extractDownloadLinks(html, isTv, season, episode) {
     var items = [];
@@ -637,8 +550,6 @@ function isHubUrl(url) {
            low.indexOf("workers.dev") !== -1;
 }
 
-// ── DirectResolver Fastpath Engine (HubCloud & HubDrive) ──────────────────────
-
 function resolveDirect(url, referer) {
     var low = (url || "").toLowerCase();
     if (/hubdrive\.[a-z0-9.-]+/i.test(low) || low.indexOf("/file/") !== -1) {
@@ -655,8 +566,6 @@ function resolveDirect(url, referer) {
     }
     return Promise.resolve([]);
 }
-
-// —— HubCloud Resolver with MD5 Title Fastpath & L0/L1 Caching —————————————————
 
 function resolveHubCloud(startUrl) {
     var driveMatch = startUrl.match(/\/drive\/([A-Za-z0-9_\-]+)/);
@@ -760,8 +669,6 @@ function resolveHubCloud(startUrl) {
     });
 }
 
-// —— Bridge Page CDN Extractor —————————————————───────────────────────────────
-
 function extractAllCdnsFromBridgePage(html) {
     if (!html || typeof html !== "string") return [];
     var list = [];
@@ -816,8 +723,6 @@ function extractCdnFromBridgePage(html) {
     return all.length ? all[0] : null;
 }
 
-// —— HubDrive Resolver —────────────────────────────────────────────────────────
-
 function resolveHubDrive(hubdriveUrl) {
     return fetchText(hubdriveUrl, { "Referer": BASE_URL + "/" })
     .then(function(html) {
@@ -833,8 +738,6 @@ function resolveHubDrive(hubdriveUrl) {
         return [];
     });
 }
-
-// —— HubCDN Resolver —──────────────────────────────────────────────────────────
 
 function resolveHubCdn(hubcdnUrl) {
     return fetchText(hubcdnUrl, { "Referer": BASE_URL + "/" })
@@ -871,8 +774,6 @@ function extractFirstCdnUrl(html) {
     var m = html.match(/href=["'](https?:\/\/[^"']+(?:\.r2\.dev|\.buzz|\.workers\.dev)[^"']+)["']/i);
     return m ? stripToken(m[1]) : null;
 }
-
-// ── Stream Builder ────────────────────────────────────────────────────────────
 
 var AUDIO_TABLE = [
     [/ddp.?51.*truehd.*71|truehd.*71.*ddp.?51/i, "DDP 5.1 + TrueHD 7.1"],
@@ -971,8 +872,6 @@ function makeStream(item, cdnUrl, isTv, showTitle, season, episode, settings, ru
         _sizeRaw: size || "",
     };
 }
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
 
 function pad(n) { return n < 10 ? "0" + n : "" + n; }
 
