@@ -355,7 +355,7 @@ function processPostPage(html, postUrl, type, season, episode, showTitle) {
 
         // ── تعديل He: فقط 1080p + اختيار الأكبر حجماً ─────────────────────────────
         out = out.filter(function(s) {
-            return s.quality === "1080p";
+            return (s.quality || "").toUpperCase() === "1080P";
         });
 
         if (out.length > 1) {
