@@ -32,7 +32,7 @@
       "id": "a111477",
       "name": "111477",
       "description": "111477 - 1080p streams",
-      "version": "1.2.0",
+      "version": "1.5.0",
       "author": "He",
       "supportedTypes": ["movie", "tv"],
       "filename": "providers/a111477.js",
