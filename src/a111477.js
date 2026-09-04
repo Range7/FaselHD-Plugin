@@ -1,6 +1,6 @@
 // 111477 — Stremio addon (st.111477.xyz) with a base64url-encoded config token.
 // Ported from PlayTorrioV3 lib/services/scraper/sites/a111477.dart
-// Modified: extract ALL 1080p streams with full original metadata.
+// Modified: extract ALL streams (1080p or Auto) with full original metadata.
 
 const { resolveMeta } = require('./_lib/tmdb');
 const { base64UrlEncode } = require('./_lib/crypto');
@@ -14,7 +14,6 @@ const HEADERS = {
   Accept: 'application/json, text/plain, */*',
 };
 
-// Build the base64url config URL (host + sort + limit), like the Dart version.
 function manifestBaseUrl(host = DEFAULT_HOST, sort = 'file-desc', limit = 3) {
   let config = host.trim();
   if (!config.endsWith('/')) config += '/';
@@ -50,16 +49,17 @@ async function getStreams(tmdbId, mediaType, season, episode) {
           if (!url || !String(url).startsWith('http') || seen.has(url)) continue;
 
           const label = it.title || it.name || '111477';
-          const quality = parseQuality(label);
+          let quality = parseQuality(label);
 
-          // فقط جودة 1080p
+          // إذا الجودة غير معروفة، نعتبرها 1080p حتى لا نحذف روابط صالحة
+          if (quality === 'Auto' || quality === 'Unknown') quality = '1080p';
+
+          // نسمح فقط بـ 1080p
           if (quality !== '1080p') continue;
 
           seen.add(url);
-
-          // نحتفظ بكل الحقول الأصلية + الجودة + الترويسات
           out.push({
-            ...it,               // كل معلومات السيرفر الأصلية
+            ...it,
             name: it.name || '111477',
             title: label,
             url,
@@ -67,7 +67,7 @@ async function getStreams(tmdbId, mediaType, season, episode) {
             headers: HEADERS,
           });
         }
-        // بدون break: نجمع من كل المعرفات حتى نضمن كل سيرفرات 1080p
+        // بدون break: جرّب المعرفين
       } catch (e) {}
     }
   } catch (e) {}
