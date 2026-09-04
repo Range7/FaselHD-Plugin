@@ -8,7 +8,7 @@
  *   - x-href Base64 decode for HubCloud download buttons
  *   - Buzz Family (.buzz) + R2 (.r2.dev) + Workers.dev + PixelDrain support
  *   - Multi-tier in-memory L0/L1 caching
- *   - Rich stream metadata (codec, audio, HDR, source, Mbps) — same as second code
+ *   - Rich stream metadata (codec, audio, HDR, source, bitrate, fps)
  *   - STRICT 1080p ONLY + Largest File Priority
  */
 
@@ -169,9 +169,15 @@ function getStreams(tmdbId, mediaType, season, episode) {
             var title = item.title || item.name || "";
             var rawDate = item.release_date || item.first_air_date || "";
             var year  = rawDate ? rawDate.substring(0, 4) : "";
+            var runtime = null;
+            if (type === "tv") {
+                runtime = (item.episode_run_time && item.episode_run_time[0]) || null;
+            } else {
+                runtime = item.runtime || null;
+            }
             if (!title) { console.log("[4khdhub] TMDB no title"); return []; }
-            console.log("[4khdhub] " + title + " (" + year + ")");
-            return scrape4KHDHub(title, year, type, sea, ep);
+            console.log("[4khdhub] " + title + " (" + year + ") runtime=" + runtime + "min");
+            return scrape4KHDHub(title, year, type, sea, ep, runtime);
         })
         .catch(function(e) {
             console.log("[4khdhub] TMDB host " + tmdbHosts[idx] + " failed: " + e.message + " — trying next");
@@ -184,7 +190,7 @@ function getStreams(tmdbId, mediaType, season, episode) {
 
 // ── Scrape 4khdhub.one ────────────────────────────────────────────────────────
 
-function scrape4KHDHub(title, year, type, season, episode) {
+function scrape4KHDHub(title, year, type, season, episode, runtime) {
     // Clean title for search (replace & with space, strip punctuation)
     var cleanTitle = title.replace(/&/g, "and").replace(/[^a-zA-Z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
     var query = cleanTitle + (type === "tv" ? " Season " + season : (year ? " " + year : ""));
@@ -207,7 +213,7 @@ function scrape4KHDHub(title, year, type, season, episode) {
                     }
                     console.log("[4khdhub] post: " + postUrl2);
                     return fetchText(postUrl2).then(function(postHtml) {
-                        return processPostPage(postHtml, postUrl2, type, season, episode, title);
+                        return processPostPage(postHtml, postUrl2, type, season, episode, title, runtime);
                     });
                 });
             }
@@ -216,7 +222,7 @@ function scrape4KHDHub(title, year, type, season, episode) {
         }
         console.log("[4khdhub] post: " + postUrl);
         return fetchText(postUrl).then(function(postHtml) {
-            return processPostPage(postHtml, postUrl, type, season, episode, title);
+            return processPostPage(postHtml, postUrl, type, season, episode, title, runtime);
         });
     })
     .catch(function(e) {
@@ -313,7 +319,7 @@ function findBestPostUrl(html, title, year, type, season) {
 
 // ── Process post page & extract download hubs ────────────────────────────────
 
-function processPostPage(html, postUrl, type, season, episode, showTitle) {
+function processPostPage(html, postUrl, type, season, episode, showTitle, runtime) {
     var isTv = type === "tv";
     var settings = resolveSettings();
 
@@ -329,7 +335,7 @@ function processPostPage(html, postUrl, type, season, episode, showTitle) {
             var urls = Array.isArray(res) ? res : [res];
             var list = [];
             for (var i = 0; i < urls.length; i++) {
-                var st = makeStream(item, urls[i], isTv, showTitle, season, episode, settings);
+                var st = makeStream(item, urls[i], isTv, showTitle, season, episode, settings, runtime);
                 if (st) list.push(st);
             }
             return list;
@@ -711,7 +717,7 @@ function extractFirstCdnUrl(html) {
     return m ? stripToken(m[1]) : null;
 }
 
-// ── Stream Builder (copied from second code) ─────────────────────────────────
+// ── Stream Builder (Enhanced with bitrate & fps) ─────────────────────────────
 
 var AUDIO_TABLE = [
     [/ddp.?51.*truehd.*71|truehd.*71.*ddp.?51/i, "DDP 5.1 + TrueHD 7.1"],
@@ -738,7 +744,12 @@ function calcMbps(sizeMB, runtimeMinutes) {
     return (bits / seconds / 1000000).toFixed(1) + " Mbps";
 }
 
-function makeStream(item, cdnUrl, isTv, showTitle, season, episode, settings) {
+function extractFps(text) {
+    var m = /\b(24|25|30|48|60|120)\s*fps\b/i.exec(text);
+    return m ? m[1] + "fps" : "";
+}
+
+function makeStream(item, cdnUrl, isTv, showTitle, season, episode, settings, runtime) {
     if (!cdnUrl) return null;
     settings = settings || resolveSettings();
 
@@ -784,12 +795,13 @@ function makeStream(item, cdnUrl, isTv, showTitle, season, episode, settings) {
     if (/\batmos\b/.test(combined)) audio += " Atmos";
 
     var sizeMB = parseSizeMB(size);
-    var mbps = calcMbps(sizeMB, null); // runtime not available in first code's pipeline; will not show Mbps unless added
+    var mbps = calcMbps(sizeMB, runtime);
+    var fps = extractFps(raw);
 
     var qualityUp = quality.toUpperCase();
     var mainTitle = ["4KHDHub", qualityUp, size].filter(Boolean).join(" • ");
     var line1 = langParts.join(" • ");
-    var line2 = [source, isRemux && "REMUX", isImax && "IMAX", pickCdn(cdnUrl), mbps].filter(Boolean).join(" • ");
+    var line2 = [source, isRemux && "REMUX", isImax && "IMAX", pickCdn(cdnUrl), mbps, fps].filter(Boolean).join(" • ");
     var line3 = [bit10Tag, dvTag, hdrTag, codec, audio].filter(Boolean).join(" • ");
     var streamTitle = [line1, line2, line3].filter(Boolean).join("\n");
 
