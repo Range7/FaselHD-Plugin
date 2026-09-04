@@ -1,6 +1,6 @@
 /**
  * 4KHDHub Nuvio Provider
- * Enhanced search + 1080p only + Sorted by size (largest first)
+ * Enhanced search + 1080p only + Sorted by size (largest first via invisible sort tag)
  */
 
 var BASE_URL = "https://4khdhub.one";
@@ -861,8 +861,12 @@ function makeStream(item, cdnUrl, isTv, showTitle, season, episode, settings, ru
     var line3 = [bit10Tag, dvTag, hdrTag, codec, audio].filter(Boolean).join(" • ");
     var streamTitle = [line1, line2, line3].filter(Boolean).join("\n");
 
+    // ── وسم غير مرئي للترتيب: الأكبر حجماً يصبح الأول ───────────────────────────
+    var sizeInMB = Math.round(parseSize(size) / 1048576);
+    var sortTag = getInvertedSortTag(sizeInMB, 999999);
+
     return {
-        name: mainTitle,
+        name: sortTag + mainTitle,
         title: mainTitle,
         size: streamTitle,
         url: cdnUrl,
