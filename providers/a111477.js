@@ -1,12 +1,12 @@
-// a111477 — 111477 provider for Nuvio (self-contained, no TMDB lookup)
-// Direct fetch from 111477 service, filters 1080p only, extracts rich metadata.
+// a111477 — 111477 provider for Nuvio (self-contained)
+// Shows all qualities, preferring 1080p first.
+// name and title are multi-line (details below) like 4KHDHub.
 
 var SERVICE_ORIGIN = 'https://st.111477.xyz';
 var DEFAULT_HOST = 'https://a.111477.xyz/';
 var UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36';
 var HEADERS = { 'User-Agent': UA, 'Accept': 'application/json' };
 
-// ── Base64 URL encode (same as service expects) ───────────────────────────
 function b64url(str) {
   var B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
   var bytes = [];
@@ -29,19 +29,14 @@ function b64url(str) {
   return out.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
-// ── Build config URL exactly like the original service ────────────────────
 function manifestBaseUrl() {
-  var host = DEFAULT_HOST;
-  var sort = 'file-desc';
-  var limit = 3;
-  var config = host.trim();
+  var config = DEFAULT_HOST.trim();
   if (!config.endsWith('/')) config += '/';
-  if (sort && sort !== 'none') config += '::sort=' + sort;
-  if (limit > 0 && limit !== 5) config += '::limit=' + limit;
+  config += '::sort=file-desc';
+  config += '::limit=3';
   return SERVICE_ORIGIN + '/config/' + b64url(config);
 }
 
-// ── Quality parser (strict 1080p filter) ──────────────────────────────────
 function parseQuality(title) {
   var t = String(title || '').toUpperCase();
   if (t.indexOf('2160') !== -1 || t.indexOf('4K') !== -1 || t.indexOf('UHD') !== -1) return '4K';
@@ -51,14 +46,12 @@ function parseQuality(title) {
   return 'Auto';
 }
 
-// ── Size parser (e.g. "2.6 GB", "1.4 GB") ────────────────────────────────
 function parseSize(title) {
   var m = String(title || '').match(/\[a11\s+([\d.]+)\s*(GB|MB)\]/i);
   if (!m) m = String(title || '').match(/([\d.]+)\s*(GB|MB)/i);
   return m ? m[1] + ' ' + m[2].toUpperCase() : '';
 }
 
-// ── Codec parser ──────────────────────────────────────────────────────────
 function parseCodec(title) {
   var t = String(title || '').toUpperCase();
   if (t.indexOf('HEVC') !== -1 || t.indexOf('X265') !== -1 || t.indexOf('H.265') !== -1) return 'HEVC';
@@ -67,7 +60,6 @@ function parseCodec(title) {
   return '';
 }
 
-// ── Audio parser ──────────────────────────────────────────────────────────
 function parseAudio(title) {
   var t = String(title || '').toUpperCase();
   if (t.indexOf('TRUEHD') !== -1 && t.indexOf('ATMOS') !== -1) return 'TrueHD Atmos 7.1';
@@ -81,7 +73,6 @@ function parseAudio(title) {
   return '';
 }
 
-// ── Source parser ─────────────────────────────────────────────────────────
 function parseSource(title) {
   var t = String(title || '').toUpperCase();
   if (t.indexOf('REMUX') !== -1) return 'BluRay REMUX';
@@ -92,7 +83,6 @@ function parseSource(title) {
   return '';
 }
 
-// ── Language parser ───────────────────────────────────────────────────────
 function parseLangs(title) {
   var t = String(title || '').toUpperCase();
   var langs = [];
@@ -105,34 +95,33 @@ function parseLangs(title) {
   return langs.length ? langs.join(' + ') : '';
 }
 
-// ── Build stream object with full metadata ────────────────────────────────
 function makeStream(it) {
   var title = it.title || it.name || '111477';
   var url = it.url;
   if (!url || String(url).indexOf('http') !== 0) return null;
 
   var quality = parseQuality(title);
-  if (quality === 'Auto') quality = '1080p'; // treat unknown as 1080p
-  if (quality !== '1080p') return null; // only 1080p
-
   var size = parseSize(title);
   var codec = parseCodec(title);
   var audio = parseAudio(title);
   var source = parseSource(title);
   var langs = parseLangs(title);
 
-  var parts = [];
-  if (source) parts.push(source);
-  if (codec) parts.push(codec);
-  if (audio) parts.push(audio);
-  if (langs) parts.push(langs);
+  var mainLine = ['111477', quality, size].filter(Boolean).join(' • ');
 
-  var name = ['111477', quality, size].filter(Boolean).join(' • ');
-  var subtitle = parts.join(' • ');
+  var details = [];
+  if (source) details.push(source);
+  if (codec) details.push(codec);
+  if (audio) details.push(audio);
+  if (langs) details.push(langs);
+  var detailsLine = details.join(' • ');
+
+  // نفس تنسيق 4KHDHub: name و title متعددي الأسطر
+  var fullName = detailsLine ? (mainLine + '\n' + detailsLine) : mainLine;
 
   return {
-    name: name,
-    title: name + (subtitle ? '\n' + subtitle : ''),
+    name: fullName,
+    title: fullName,
     url: url,
     quality: quality,
     headers: HEADERS,
@@ -141,22 +130,18 @@ function makeStream(it) {
   };
 }
 
-// ── Main getStreams (Promise-based, no external dependencies) ─────────────
 function getStreams(tmdbId, mediaType, season, episode) {
-  var addonBase = manifestBaseUrl();
-  var isTv = mediaType === 'tv';
   var rawId = String(tmdbId || '').replace(/^tt/, '');
-
-  // Use both IMDb id (if present) and tmdb id
   var ids = [];
   if (String(tmdbId || '').indexOf('tt') === 0) ids.push(String(tmdbId));
   ids.push('tmdb:' + rawId);
 
+  var addonBase = manifestBaseUrl();
   var promises = [];
 
   for (var i = 0; i < ids.length; i++) {
     var id = ids[i];
-    var ep = isTv
+    var ep = mediaType === 'tv'
       ? addonBase + '/stream/series/' + id + ':' + (season || 1) + ':' + (episode || 1) + '.json'
       : addonBase + '/stream/movie/' + id + '.json';
 
@@ -183,16 +168,15 @@ function getStreams(tmdbId, mediaType, season, episode) {
       }
     }
 
-    // Sort by size descending (largest 1080p first)
+    var rank = { '4K': 4, '1080p': 3, '720p': 2, '480p': 1, 'Auto': 0 };
     out.sort(function (a, b) {
-      return parseFloat(b._sizeRaw) - parseFloat(a._sizeRaw);
+      return (rank[b.quality] || 0) - (rank[a.quality] || 0) || (parseFloat(b._sizeRaw) - parseFloat(a._sizeRaw));
     });
 
     return out;
   }).catch(function () { return []; });
 }
 
-// ── Export ─────────────────────────────────────────────────────────────────
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = { getStreams: getStreams };
 } else if (typeof globalThis !== 'undefined') {
