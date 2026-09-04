@@ -127,12 +127,12 @@ function makeStream(it) {
   if (audio) parts.push(audio);
   if (langs) parts.push(langs);
 
-  var name = ['111477', quality, size].filter(Boolean).join(' • ');
-  var subtitle = parts.join(' • ');
+  // نبني الاسم الكامل مع كل المعلومات
+  var fullName = ['111477', quality, size].concat(parts).filter(Boolean).join(' • ');
 
   return {
-    name: name,
-    title: name + (subtitle ? '\n' + subtitle : ''),
+    name: fullName,
+    title: fullName,
     url: url,
     quality: quality,
     headers: HEADERS,
