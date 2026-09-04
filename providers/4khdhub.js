@@ -8,6 +8,8 @@
  *   - x-href Base64 decode for HubCloud download buttons
  *   - Buzz Family (.buzz) + R2 (.r2.dev) + Workers.dev + PixelDrain support
  *   - Multi-tier in-memory L0/L1 caching
+ *   - Rich stream metadata (codec, audio, HDR, source, Mbps)
+ *   - STRICT 1080p ONLY + Largest File Priority
  */
 
 var BASE_URL = "https://4khdhub.one";
@@ -709,7 +711,7 @@ function extractFirstCdnUrl(html) {
     return m ? stripToken(m[1]) : null;
 }
 
-// ── Stream Builder ────────────────────────────────────────────────────────────
+// ── Stream Builder (Enhanced with Rich Metadata) ─────────────────────────────
 
 function makeStream(item, cdnUrl, isTv, showTitle, season, episode, settings) {
     if (!cdnUrl) return null;
@@ -730,6 +732,9 @@ function makeStream(item, cdnUrl, isTv, showTitle, season, episode, settings) {
     var audio  = pickAudio(raw);
     var hdr    = pickHdr(raw);
     var cdn    = pickCdn(cdnUrl);
+    var langs  = pickLanguages(raw);
+    var bit10  = /\b10bit\b/i.test(raw) ? "10Bit" : "";
+    var isRemux = /\bremux\b/i.test(raw);
 
     var resRanks = { "4K": 4, "2160p": 4, "1080p": 3, "720p": 2, "480p": 1, "360p": 0, "Unknown": 0 };
     var qRank = resRanks[res] !== undefined ? resRanks[res] : (resRanks[mapQuality(label)] || 0);
@@ -752,10 +757,16 @@ function makeStream(item, cdnUrl, isTv, showTitle, season, episode, settings) {
     var qParts = [];
     if (res)   qParts.push(res);
     if (src)   qParts.push(src);
+    if (isRemux) qParts.push("REMUX");
     if (codec) qParts.push(codec);
     lines.push("\uD83C\uDFAC " + (qParts.length ? qParts.join(" \u2022 ") : res));
 
-    if (hdr) lines.push("\uD83C\uDF9E\uFE0F " + hdr);
+    var metaParts = [];
+    if (hdr) metaParts.push(hdr);
+    if (bit10) metaParts.push(bit10);
+    if (langs.length) metaParts.push(langs.join(" + "));
+    if (metaParts.length) lines.push("\uD83C\uDF9E\uFE0F " + metaParts.join(" \u2022 "));
+
     if (cdn) lines.push("\uD83D\uDEF0\uFE0F Source: " + cdn);
     if (size) lines.push("\uD83D\uDCBE " + size);
     if (audio) lines.push(audio);
@@ -785,12 +796,10 @@ function extractSize(text) {
 }
 
 function pickCodec(text) {
-    var m = text.match(/\b(HEVC|x265|H\.?265|x264|H\.?264|AVC|AV1)\b/i);
-    if (!m) return "";
-    var v = m[1].toUpperCase();
-    if (v === "X265" || v === "H265" || v === "H.265") return "HEVC";
-    if (v === "X264" || v === "H264" || v === "H.264" || v === "AVC") return "H.264";
-    return v;
+    if (/\b(?:hevc|x265|h\.?265)\b/i.test(text)) return "HEVC";
+    if (/\b(?:x264|h\.?264|avc)\b/i.test(text)) return "H.264";
+    if (/\bav1\b/i.test(text)) return "AV1";
+    return "";
 }
 
 function pickSource(text) {
@@ -806,34 +815,59 @@ function pickSource(text) {
     return "";
 }
 
+var AUDIO_TABLE = [
+    [/ddp.?51.*truehd.*71|truehd.*71.*ddp.?51/i, "DDP 5.1 + TrueHD 7.1"],
+    [/ddp.?51.*ddp.?71|ddp.?71.*ddp.?51/i, "DDP 5.1 + DDP 7.1"],
+    [/ddp.?51.*aac.?71|aac.?71.*ddp.?51/i, "DDP 5.1 + AAC 7.1"],
+    [/ddp.?51/i, "DDP 5.1"],
+    [/truehd/i, "TrueHD 7.1"],
+    [/aac.*71|71.*aac/i, "AAC 7.1"],
+    [/aac/i, "AAC 5.1"],
+];
+
 function pickAudio(text) {
-    var af = text.match(/\b(DDP5\.1|DD5\.1|DDP|DTS-HD|DTS|Atmos|EAC3|AAC|AC3)\b/i);
-    var fmt = af ? " [" + af[1].toUpperCase() + "]" : "";
-
-    var langs = [];
-    if (/\bhindi\b/i.test(text))   langs.push("Hindi");
-    if (/\benglish\b/i.test(text)) langs.push("English");
-    if (/\btamil\b/i.test(text))   langs.push("Tamil");
-    if (/\btelugu\b/i.test(text))  langs.push("Telugu");
-
-    if (langs.length) return "\uD83C\uDFA7 Audio: " + langs.join(" + ") + fmt;
-    if (/dual\s*audio/i.test(text) || /hindi.*english|english.*hindi/i.test(text)) {
-        return "\uD83C\uDFA7 Audio: Hindi + English" + fmt;
+    var combined = text.toLowerCase();
+    var audio = "";
+    for (var i = 0; i < AUDIO_TABLE.length; i++) {
+        if (AUDIO_TABLE[i][0].test(combined)) {
+            audio = AUDIO_TABLE[i][1];
+            break;
+        }
     }
-    if (/multi\s*audio/i.test(text)) {
-        return "\uD83C\uDFA7 Audio: Multi-Audio" + fmt;
+    if (/\batmos\b/i.test(combined)) {
+        audio = audio ? audio + " Atmos" : "Atmos";
     }
-    return fmt ? "\uD83C\uDFA7 Audio: Unknown" + fmt : "";
+    if (!audio) {
+        var af = combined.match(/\b(ddp5\.1|dd5\.1|ddp|dts-hd|dts|eac3|aac|ac3)\b/i);
+        if (af) audio = af[1].toUpperCase();
+    }
+    return audio ? "\uD83C\uDFA7 Audio: " + audio : "";
 }
 
 function pickHdr(text) {
     var p = [];
     if (/\bDolby\s*Vision\b|\bDV\b/i.test(text))  p.push("DV");
     if (/\bHDR10\+/i.test(text))                  p.push("HDR10+");
+    else if (/\bHDR10\b/i.test(text))             p.push("HDR10");
     else if (/\bHDR\b/i.test(text))               p.push("HDR");
     if (/\bSDR\b/i.test(text))                    p.push("SDR");
     if (/\bIMAX\b/i.test(text))                   p.push("IMAX");
     return p.join(" ");
+}
+
+function pickLanguages(text) {
+    var langs = [];
+    if (/\bhindi\b/i.test(text))   langs.push("Hindi");
+    if (/\benglish\b/i.test(text)) langs.push("English");
+    if (/\btamil\b/i.test(text))   langs.push("Tamil");
+    if (/\btelugu\b/i.test(text))  langs.push("Telugu");
+    if (/\bdual\s*audio/i.test(text) || /hindi.*english|english.*hindi/i.test(text)) {
+        langs = ["Hindi", "English"];
+    }
+    if (/\bmulti\s*audio/i.test(text)) {
+        langs = ["Multi-Audio"];
+    }
+    return langs;
 }
 
 function pickCdn(url) {
@@ -880,6 +914,21 @@ function parseSize(str) {
     if (u === "MB") return n * 1e6;
     if (u === "KB") return n * 1e3;
     return n;
+}
+
+function parseSizeMB(str) {
+    if (!str) return null;
+    var m = /(\d+\.?\d*)\s*(GB|MB)/i.exec(str);
+    if (!m) return null;
+    var val = parseFloat(m[1]);
+    return m[2].toUpperCase() === "GB" ? val * 1024 : val;
+}
+
+function calcMbps(sizeMB, runtimeMinutes) {
+    if (!sizeMB || !runtimeMinutes) return null;
+    var bits = sizeMB * 1024 * 1024 * 8;
+    var seconds = runtimeMinutes * 60;
+    return (bits / seconds / 1000000).toFixed(1) + " Mbps";
 }
 
 function decodeEntities(str) {
