@@ -1,138 +1,34 @@
-// a111477 Provider for Nuvio v2 — Ultra-Reliable Edition
-// Rate-limit protection: jitter delay + UA rotation + long cache
+// a111477 Provider for Nuvio — Complete with Rich Metadata
 // Based on ahmedelkassrawy/nuvio-providers actual implementation
 // Enhanced with 4KHDHub-style rich metadata display
 // Hermes-safe: no async/await, no const/let, no arrow functions, no URL constructor
 
 // ═════════════════════════════════════════════════════════════════════════════
-// CONFIG
+// INLINE LIBRARIES (self-contained, no external requires)
 // ═════════════════════════════════════════════════════════════════════════════
 
 var TMDB_API_KEY = "b3556f3b206e16f82df4d1f6fd4545e6";
 var TMDB_DIRECT = "https://api.themoviedb.org/3";
 var TMDB_PROXY = "https://db.speedracelight.com/3";
+var UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 var SERVICE_ORIGIN = "https://st.111477.xyz";
 var DEFAULT_HOST = "https://a.111477.xyz/";
-var DEBUG = true;
 
-// Cache TTLs
-var META_CACHE_TTL = 4 * 60 * 60 * 1000;      // 4 hours for TMDB metadata
-var STREAM_CACHE_TTL = 3 * 60 * 60 * 1000;    // 3 hours for stream results
-var ADDON_CACHE_TTL = 6 * 60 * 60 * 1000;     // 6 hours for addon manifest base
+var _metaCache = {};
+var _tmdbPool = [TMDB_DIRECT, TMDB_PROXY];
 
-// Rate limiting
-var MAX_REQUESTS_PER_MINUTE = 4;
-var REQUEST_LOG = [];
-
-// ═════════════════════════════════════════════════════════════════════════════
-// USER-AGENT ROTATION
-// ═════════════════════════════════════════════════════════════════════════════
-
-var USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) Gecko/20100101 Firefox/133.0",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:132.0) Gecko/20100101 Firefox/132.0",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0"
-];
-
-var REFERERS = [
-    "https://st.111477.xyz/",
-    "https://a.111477.xyz/",
-    "https://www.google.com/",
-    "https://www.themoviedb.org/"
-];
-
-function getUA() {
-    return USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
-}
-
-function getReferer() {
-    return REFERERS[Math.floor(Math.random() * REFERERS.length)];
-}
-
-// ═════════════════════════════════════════════════════════════════════════════
-// LOGGING
-// ═════════════════════════════════════════════════════════════════════════════
-
-function log(msg) {
-    if (DEBUG) console.log("[a111477] " + msg);
-}
-
-function logError(msg) {
-    console.error("[a111477] " + msg);
-}
-
-// ═════════════════════════════════════════════════════════════════════════════
-// RATE LIMITING + JITTER DELAY
-// ═════════════════════════════════════════════════════════════════════════════
-
-function checkRateLimit() {
-    var now = Date.now();
-    REQUEST_LOG = REQUEST_LOG.filter(function(t) { return now - t < 60000; });
-    if (REQUEST_LOG.length >= MAX_REQUESTS_PER_MINUTE) {
-        log("RATE LIMIT: " + REQUEST_LOG.length + " requests in last 60s, throttling...");
-        return false;
-    }
-    REQUEST_LOG.push(now);
-    return true;
-}
-
-function jitterDelay(minMs, maxMs) {
-    minMs = minMs || 2000;
-    maxMs = maxMs || 8000;
-    var delay = minMs + Math.floor(Math.random() * (maxMs - minMs));
-    log("jitter delay: " + delay + "ms");
-    return new Promise(function(r) { setTimeout(r, delay); });
-}
-
-function wait(ms) {
-    return new Promise(function(r) { setTimeout(r, ms); });
-}
-
-// ═════════════════════════════════════════════════════════════════════════════
-// HTTP with timeout + retry + jitter
-// ═════════════════════════════════════════════════════════════════════════════
-
+// ── HTTP with timeout ───────────────────────────────────────────────────────
 function fetchT(url, opts, ms) {
-    ms = ms || 15000;
-    var ua = getUA();
-    var ref = getReferer();
-    opts = opts || {};
-    opts.headers = opts.headers || {};
-    opts.headers["User-Agent"] = ua;
-    if (!opts.headers["Referer"]) opts.headers["Referer"] = ref;
-
+    ms = ms || 8000;
     return Promise.race([
-        fetch(url, opts),
+        fetch(url, opts || {}),
         new Promise(function(_, reject) {
-            setTimeout(function() { reject(new Error("timeout after " + ms + "ms")); }, ms);
+            setTimeout(function() { reject(new Error("timeout")); }, ms);
         })
     ]);
 }
 
-function fetchWithRetry(url, opts, maxRetries) {
-    maxRetries = maxRetries || 3;
-    function attempt(n) {
-        return fetchT(url, opts, 15000)
-        .catch(function(e) {
-            if (n >= maxRetries) {
-                log("fetch failed after " + maxRetries + " retries: " + e.message);
-                throw e;
-            }
-            var delay = 2000 + Math.floor(Math.random() * 4000 * n);
-            log("retry " + (n + 1) + "/" + maxRetries + " after " + delay + "ms | error: " + e.message);
-            return wait(delay).then(function() { return attempt(n + 1); });
-        });
-    }
-    return attempt(1);
-}
-
-// ═════════════════════════════════════════════════════════════════════════════
-// CRYPTO (base64url)
-// ═════════════════════════════════════════════════════════════════════════════
-
+// ── Crypto (base64url) ──────────────────────────────────────────────────────
 var B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 function base64Encode(input) {
@@ -154,77 +50,20 @@ function base64UrlEncode(input) {
     return base64Encode(input).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-// CACHES
-// ═════════════════════════════════════════════════════════════════════════════
-
-var _metaCache = {};
-var _streamCache = {};
-var _addonBaseCache = null;
-var _addonBaseCacheTime = 0;
-
-function getMetaCache(key) {
-    var c = _metaCache[key];
-    if (c && c._time && (Date.now() - c._time < META_CACHE_TTL)) {
-        log("meta cache HIT for " + key);
-        return c.data;
-    }
-    return null;
-}
-
-function setMetaCache(key, data) {
-    _metaCache[key] = { data: data, _time: Date.now() };
-}
-
-function getStreamCache(key) {
-    var c = _streamCache[key];
-    if (c && c._time && (Date.now() - c._time < STREAM_CACHE_TTL)) {
-        log("stream cache HIT for " + key);
-        return c.data;
-    }
-    return null;
-}
-
-function setStreamCache(key, data) {
-    _streamCache[key] = { data: data, _time: Date.now() };
-}
-
-function getAddonBase() {
-    if (_addonBaseCache && (Date.now() - _addonBaseCacheTime < ADDON_CACHE_TTL)) {
-        log("addon base cache HIT");
-        return _addonBaseCache;
-    }
-    var base = manifestBaseUrl();
-    _addonBaseCache = base;
-    _addonBaseCacheTime = Date.now();
-    return base;
-}
-
-// ═════════════════════════════════════════════════════════════════════════════
-// TMDB METADATA
-// ═════════════════════════════════════════════════════════════════════════════
-
-var _tmdbPool = [TMDB_DIRECT, TMDB_PROXY];
-
+// ── TMDB Metadata Resolution ────────────────────────────────────────────────
 function resolveMeta(tmdbId, mediaType) {
     var kind = mediaType === "tv" ? "tv" : "movie";
     var ck = kind + ":" + tmdbId;
-    var cached = getMetaCache(ck);
-    if (cached) return Promise.resolve(cached);
+    if (_metaCache[ck]) return Promise.resolve(_metaCache[ck]);
 
     function tryHost(idx) {
-        if (idx >= _tmdbPool.length) {
-            log("TMDB all hosts failed for " + ck);
-            return Promise.resolve(null);
-        }
+        if (idx >= _tmdbPool.length) return Promise.resolve(null);
         var base = _tmdbPool[idx];
         var withKey = base.indexOf("api.themoviedb.org") !== -1;
         var keyParam = withKey ? "&api_key=" + TMDB_API_KEY : "";
         var url = base + "/" + kind + "/" + tmdbId + "?append_to_response=external_ids" + keyParam;
 
-        log("TMDB host " + (idx + 1) + "/" + _tmdbPool.length + ": " + base);
-
-        return fetchT(url, { headers: { "Accept": "application/json" } }, 12000)
+        return fetchT(url, { headers: { "User-Agent": UA, "Accept": "application/json" } }, 6000)
         .then(function(r) {
             if (!r.ok) throw new Error("HTTP " + r.status);
             return r.json();
@@ -235,23 +74,16 @@ function resolveMeta(tmdbId, mediaType) {
             var year = dateStr ? parseInt(String(dateStr).slice(0, 4), 10) : null;
             var imdbId = (j.external_ids && j.external_ids.imdb_id) || j.imdb_id || null;
             var meta = { title: title, year: year, imdbId: imdbId };
-            setMetaCache(ck, meta);
-            log("meta resolved: title=" + title + " year=" + year + " imdb=" + imdbId);
+            _metaCache[ck] = meta;
             return meta;
         })
-        .catch(function(e) {
-            log("TMDB host " + (idx + 1) + " failed: " + e.message);
-            return tryHost(idx + 1);
-        });
+        .catch(function() { return tryHost(idx + 1); });
     }
 
     return tryHost(0);
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-// DEDUP & SORT
-// ═════════════════════════════════════════════════════════════════════════════
-
+// ── Dedup & Sort ─────────────────────────────────────────────────────────────
 function dedupByUrl(streams) {
     var seen = {};
     var out = [];
@@ -282,10 +114,7 @@ function parseQuality(s) {
     return "Auto";
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-// CONFIG TOKEN BUILDER
-// ═════════════════════════════════════════════════════════════════════════════
-
+// ── Config Token Builder ────────────────────────────────────────────────────
 function manifestBaseUrl(host, sort, limit) {
     host = host || DEFAULT_HOST;
     sort = sort || "file-desc";
@@ -348,9 +177,12 @@ function extractFps(text) {
     return m ? m[1] + "fps" : "";
 }
 
+// Hermes-safe: no new URL() constructor
 function pickHost(url) {
     if (!url) return "Direct";
     var low = url.toLowerCase();
+
+    // Extract hostname using regex (Hermes-safe)
     var hostMatch = low.match(/^https?:\/\/([^\/?:#]+)/);
     var hostname = hostMatch ? hostMatch[1] : "";
 
@@ -423,13 +255,16 @@ function enrichStream(it, meta) {
     var line2 = rawLines[1] || "";
     var fullText = line1 + " " + line2;
 
+    // ── Extract Quality ─────────────────────────────────────────────
     var quality = extractQualityLabel(fullText + " " + name);
     var qualityUp = quality.toUpperCase();
 
+    // ── Extract Size ────────────────────────────────────────────────
     var size = extractSize(fullText);
     if (!size) size = extractSize(name);
     if (!size) size = extractSize(url);
 
+    // ── Extract Language ────────────────────────────────────────────
     var langParts = [];
     if (/\b(?:english|eng)\b/.test(combined)) langParts.push("English");
     if (/\bhindi\b/.test(combined)) langParts.push("Hindi");
@@ -448,6 +283,7 @@ function enrichStream(it, meta) {
     if (/\bmulti\b/.test(combined)) langParts.push("Multi Audio");
     if (langParts.length === 0) langParts.push("English");
 
+    // ── Extract Source ────────────────────────────────────────────────
     var source = "WEB-DL";
     var isRemux = false;
     if (/\bremux\b/.test(combined)) { source = "Blu-ray"; isRemux = true; }
@@ -458,6 +294,7 @@ function enrichStream(it, meta) {
     else if (/\bcam\b/.test(combined)) source = "CAM";
     else if (/\bts\b/.test(combined)) source = "TS";
 
+    // ── Extract HDR / DV ────────────────────────────────────────────
     var hdrTag = "";
     if (/\b(?:hdr10\+|hdr10p)\b/.test(combined)) hdrTag = "HDR10+";
     else if (/\bhdr10\b/.test(combined)) hdrTag = "HDR10";
@@ -467,24 +304,32 @@ function enrichStream(it, meta) {
     var dvTag = /\b(?:dv|dolby\s*vision)\b/.test(combined) ? "DV" : "";
     var bit10Tag = /\b10bit\b/.test(combined) ? "10Bit" : "";
 
+    // ── Extract Codec ───────────────────────────────────────────────
     var codec = "H.264";
     if (/\b(?:hevc|x265|265|h265)\b/.test(combined)) codec = "H.265";
     else if (/\bav1\b/.test(combined)) codec = "AV1";
     else if (/\bvp9\b/.test(combined)) codec = "VP9";
     if (qualityUp === "4K" || qualityUp === "2160P") codec = "H.265";
 
+    // ── Extract Audio ───────────────────────────────────────────────
     var audio = "AAC 5.1";
     for (var i = 0; i < AUDIO_TABLE.length; i++) {
         if (AUDIO_TABLE[i][0].test(combined)) { audio = AUDIO_TABLE[i][1]; break; }
     }
     if (/\batmos\b/.test(combined)) audio += " Atmos";
 
+    // ── Extract FPS ─────────────────────────────────────────────────
     var fps = extractFps(fullText);
+
+    // ── Extract Host / CDN ──────────────────────────────────────────
     var host = pickHost(url);
+
+    // ── Calculate Bitrate (approximate) ───────────────────────────
     var sizeMB = parseSizeMB(size);
     var runtime = guessRuntime(qualityUp);
     var mbps = calcMbps(sizeMB, runtime);
 
+    // ── Build Display Lines ───────────────────────────────────────
     var mainTitleParts = ["111477", qualityUp, size];
     var mainTitle = "";
     for (var ti = 0; ti < mainTitleParts.length; ti++) {
@@ -523,6 +368,7 @@ function enrichStream(it, meta) {
         }
     }
 
+    // ── Sort Tag (by quality priority, then size) ───────────────────
     var qualityScore = qualityUp === "4K" ? 4000 : qualityUp === "2160P" ? 4000 :
                        qualityUp === "1080P" ? 3000 : qualityUp === "720P" ? 2000 :
                        qualityUp === "480P" ? 1000 : 500;
@@ -530,10 +376,11 @@ function enrichStream(it, meta) {
     var totalScore = qualityScore + sizeScore;
     var sortTag = getInvertedSortTag(totalScore, 999999);
 
+    // ── Headers ─────────────────────────────────────────────────────
     var headers = {
-        "User-Agent": getUA(),
+        "User-Agent": UA,
         "Accept": "application/json, text/plain, */*",
-        "Referer": getReferer()
+        "Referer": SERVICE_ORIGIN + "/"
     };
     if (it.behaviorHints && it.behaviorHints.proxyHeaders && it.behaviorHints.proxyHeaders.request) {
         var ph = it.behaviorHints.proxyHeaders.request;
@@ -558,119 +405,84 @@ function enrichStream(it, meta) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// MAIN getStreams — Ultra-Reliable
+// MAIN getStreams (actual a111477 logic)
 // ═════════════════════════════════════════════════════════════════════════════
 
 function getStreams(tmdbId, mediaType, season, episode) {
+    var out = [];
+    var seen = {};
     var isTv = mediaType === "tv";
     var sea = parseInt(season, 10) || 1;
     var ep = parseInt(episode, 10) || 1;
-    var cacheKey = (isTv ? "tv" : "movie") + ":" + tmdbId + ":" + sea + ":" + ep;
 
-    log((isTv ? "tv" : "movie") + " tmdb=" + tmdbId + (isTv ? " S" + sea + "E" + ep : ""));
-
-    // Check stream cache first
-    var cachedStreams = getStreamCache(cacheKey);
-    if (cachedStreams) {
-        log("returning " + cachedStreams.length + " cached streams");
-        return Promise.resolve(cachedStreams);
-    }
-
-    var out = [];
-    var seen = {};
+    console.log("[a111477] " + (isTv ? "tv" : "movie") + " tmdb=" + tmdbId + (isTv ? " S" + sea + "E" + ep : ""));
 
     return resolveMeta(tmdbId, mediaType)
     .then(function(meta) {
         var ids = [];
         if (meta && meta.imdbId && meta.imdbId.indexOf("tt") === 0) {
             ids.push(meta.imdbId);
-            log("using imdb id: " + meta.imdbId);
         }
         ids.push("tmdb:" + tmdbId);
-        log("fallback tmdb id: tmdb:" + tmdbId);
-        return processIds(ids, isTv, sea, ep, out, seen, cacheKey);
+
+        var addonBase = manifestBaseUrl();
+        console.log("[a111477] addonBase: " + addonBase);
+        console.log("[a111477] trying IDs: " + ids.join(", "));
+
+        function tryId(idx) {
+            if (idx >= ids.length) return Promise.resolve();
+            var id = ids[idx];
+            var epUrl = isTv
+                ? addonBase + "/stream/series/" + id + ":" + sea + ":" + ep + ".json"
+                : addonBase + "/stream/movie/" + id + ".json";
+
+            console.log("[a111477] fetching: " + epUrl);
+
+            return fetchT(epUrl, { headers: { "User-Agent": UA, "Accept": "application/json" } }, 10000)
+            .then(function(r) {
+                if (!r.ok) {
+                    console.log("[a111477] HTTP " + r.status + " for " + id);
+                    return tryId(idx + 1);
+                }
+                return r.json();
+            })
+            .then(function(data) {
+                if (!data || !data.streams || !Array.isArray(data.streams)) {
+                    console.log("[a111477] no streams for " + id);
+                    return tryId(idx + 1);
+                }
+                console.log("[a111477] " + data.streams.length + " raw streams from " + id);
+
+                for (var i = 0; i < data.streams.length; i++) {
+                    var it = data.streams[i];
+                    var url = it && it.url;
+                    if (!url || String(url).indexOf("http") !== 0 || seen[url]) continue;
+                    seen[url] = true;
+
+                    var enriched = enrichStream(it, meta);
+                    if (enriched) out.push(enriched);
+                }
+
+                if (data.streams.length > 0) {
+                    console.log("[a111477] success with ID: " + id);
+                    return Promise.resolve();
+                }
+                return tryId(idx + 1);
+            })
+            .catch(function(e) {
+                console.log("[a111477] error for " + id + ": " + e.message);
+                return tryId(idx + 1);
+            });
+        }
+
+        return tryId(0);
     })
-    .catch(function(e) {
-        log("resolveMeta failed, trying direct tmdb id: " + e.message);
-        var ids = ["tmdb:" + tmdbId];
-        return processIds(ids, isTv, sea, ep, out, seen, cacheKey);
-    });
-}
-
-function processIds(ids, isTv, sea, ep, out, seen, cacheKey) {
-    var addonBase = getAddonBase();
-    log("addonBase: " + addonBase);
-    log("trying IDs: " + ids.join(", "));
-
-    function tryId(idx) {
-        if (idx >= ids.length) {
-            log("all IDs exhausted");
-            return Promise.resolve();
-        }
-        var id = ids[idx];
-        var epUrl = isTv
-            ? addonBase + "/stream/series/" + id + ":" + sea + ":" + ep + ".json"
-            : addonBase + "/stream/movie/" + id + ".json";
-
-        log("fetching: " + epUrl);
-
-        // Rate limit check
-        if (!checkRateLimit()) {
-            log("rate limit hit, waiting before request...");
-            return wait(15000).then(function() { return tryId(idx); });
-        }
-
-        return jitterDelay(1500, 5000).then(function() {
-            return fetchWithRetry(epUrl, { headers: { "Accept": "application/json" } }, 3);
-        })
-        .then(function(r) {
-            if (!r.ok) {
-                log("HTTP " + r.status + " for " + id);
-                return tryId(idx + 1);
-            }
-            return r.json();
-        })
-        .then(function(data) {
-            if (!data || !data.streams || !Array.isArray(data.streams)) {
-                log("no streams array for " + id);
-                return tryId(idx + 1);
-            }
-            log(data.streams.length + " raw streams from " + id);
-
-            for (var i = 0; i < data.streams.length; i++) {
-                var it = data.streams[i];
-                var url = it && it.url;
-                if (!url || String(url).indexOf("http") !== 0 || seen[url]) continue;
-                seen[url] = true;
-
-                var enriched = enrichStream(it, {});
-                if (enriched) out.push(enriched);
-            }
-
-            if (data.streams.length > 0) {
-                log("success with ID: " + id);
-                return Promise.resolve();
-            }
-            return tryId(idx + 1);
-        })
-        .catch(function(e) {
-            log("error for " + id + ": " + e.message);
-            return tryId(idx + 1);
-        });
-    }
-
-    return tryId(0)
     .then(function() {
-        log("total enriched streams: " + out.length);
-        var result = sortByQuality(dedupByUrl(out));
-        if (result.length > 0) {
-            setStreamCache(cacheKey, result);
-            log("cached " + result.length + " streams for " + cacheKey);
-        }
-        return result;
+        console.log("[a111477] total enriched streams: " + out.length);
+        return sortByQuality(dedupByUrl(out));
     })
     .catch(function(e) {
-        logError("fatal error: " + e.message);
+        console.error("[a111477] fatal error: " + e.message);
         return [];
     });
 }
