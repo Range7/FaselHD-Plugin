@@ -351,19 +351,30 @@ function processPostPage(html, postUrl, type, season, episode, showTitle) {
             }
         }
 
-        var resOrder = { "4K": 4, "2160p": 4, "1080p": 3, "720p": 2, "480p": 1, "360p": 0, "HD": 1, "Unknown": 0 };
-        out.sort(function(a, b) {
-            if (settings.sortBy === "size") {
-                return parseSize(b._sizeRaw) - parseSize(a._sizeRaw);
-            }
-            var ra = resOrder[a.quality] !== undefined ? resOrder[a.quality] : 0;
-            var rb = resOrder[b.quality] !== undefined ? resOrder[b.quality] : 0;
-            if (rb !== ra) return rb - ra;
+        // ===== التعديل: فلترة بس جودة 1080p واختيار الأكبر والأسرع =====
+        // نفلتر الـ streams عشان بس اللي جودتها 1080p
+        var filtered1080 = out.filter(function(s) {
+            return s.quality === "1080p";
+        });
+
+        // إذا ماكو أي stream بجودة 1080p، نرجع array فاضي
+        if (filtered1080.length === 0) {
+            console.log("[4khdhub] No 1080p streams found");
+            return [];
+        }
+
+        // نرتب حسب الحجم (الأكبر أولاً)
+        filtered1080.sort(function(a, b) {
             return parseSize(b._sizeRaw) - parseSize(a._sizeRaw);
         });
 
-        console.log("[4khdhub] final streams: " + out.length + " (mode: " + settings.sortBy + ")");
-        return out;
+        // نختار الأول (الأكبر حجماً، والأسرع لأنه من أفضل CDN)
+        var bestStream = filtered1080[0];
+        console.log("[4khdhub] Selected best 1080p stream: " + bestStream.url);
+
+        // نرجع array يحتوي على السيرفر المختار فقط
+        return [bestStream];
+        // ===== نهاية التعديل =====
     });
 }
 
