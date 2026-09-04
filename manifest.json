@@ -30,16 +30,16 @@
     },
     {
       "id": "a111477",
-      "name": "111477",
-      "description": "Stremio addon (st.111477.xyz) with base64url config token.",
-      "version": "0.2.0",
-      "author": "He",
-      "supportedTypes": ["movie", "tv"],
-      "filename": "providers/a111477.js",
-      "enabled": true,
-      "formats": ["mp4", "mkv"],
-      "logo": "",
-      "contentLanguage": ["en"]
+  "name": "111477",
+  "description": "111477 - 1080p streams",
+  "version": "0.2.0",
+  "author": "He",
+  "supportedTypes": ["movie", "tv"],
+  "filename": "providers/a111477.js",
+  "enabled": true,
+  "formats": ["mp4", "mkv"],
+  "logo": "",
+  "contentLanguage": ["en"]
     },
     {
       "id": "krmzi",
