@@ -35,7 +35,7 @@
       "version": "0.1",
       "author": "He",
       "supportedTypes": ["movie", "tv"],
-      "filename": "providers/111477.js",
+      "filename": "providers/a111477.js",
       "enabled": true,
       "formats": ["mp4", "mkv"],
       "logo": "",
