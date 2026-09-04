@@ -1,6 +1,6 @@
 // a111477 — 111477 provider for Nuvio (self-contained, no TMDB lookup)
 // Direct fetch from 111477 service, filters 1080p only, extracts rich metadata.
-// Info displayed below server name (multi-line name like 4KHDHub).
+// Both name and title are multi-line: details below main line.
 
 var SERVICE_ORIGIN = 'https://st.111477.xyz';
 var DEFAULT_HOST = 'https://a.111477.xyz/';
@@ -122,13 +122,11 @@ function makeStream(it) {
   if (langs) details.push(langs);
   var detailsLine = details.join(' • ');
 
-  var nameLines = [mainLine];
-  if (detailsLine) nameLines.push(detailsLine);
-  var fullName = nameLines.join('\n');
+  var fullName = detailsLine ? (mainLine + '\n' + detailsLine) : mainLine;
 
   return {
     name: fullName,
-    title: mainLine,
+    title: fullName,
     url: url,
     quality: quality,
     headers: HEADERS,
