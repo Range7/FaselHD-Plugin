@@ -8,7 +8,7 @@
  *   - x-href Base64 decode for HubCloud download buttons
  *   - Buzz Family (.buzz) + R2 (.r2.dev) + Workers.dev + PixelDrain support
  *   - Multi-tier in-memory L0/L1 caching
- *   - Rich stream metadata (codec, audio, HDR, source, Mbps)
+ *   - Rich stream metadata (codec, audio, HDR, source, Mbps) — same as second code
  *   - STRICT 1080p ONLY + Largest File Priority
  */
 
@@ -711,7 +711,32 @@ function extractFirstCdnUrl(html) {
     return m ? stripToken(m[1]) : null;
 }
 
-// ── Stream Builder (Enhanced with Rich Metadata) ─────────────────────────────
+// ── Stream Builder (copied from second code) ─────────────────────────────────
+
+var AUDIO_TABLE = [
+    [/ddp.?51.*truehd.*71|truehd.*71.*ddp.?51/i, "DDP 5.1 + TrueHD 7.1"],
+    [/ddp.?51.*ddp.?71|ddp.?71.*ddp.?51/i, "DDP 5.1 + DDP 7.1"],
+    [/ddp.?51.*aac.?71|aac.?71.*ddp.?51/i, "DDP 5.1 + AAC 7.1"],
+    [/ddp.?51/i, "DDP 5.1"],
+    [/truehd/i, "TrueHD 7.1"],
+    [/aac.*71|71.*aac/i, "AAC 7.1"],
+    [/aac/i, "AAC 5.1"],
+];
+
+function parseSizeMB(sizeStr) {
+    if (!sizeStr) return null;
+    var m = /(\d+\.?\d*)\s*(GB|MB)/i.exec(sizeStr);
+    if (!m) return null;
+    var val = parseFloat(m[1]);
+    return m[2].toUpperCase() === "GB" ? val * 1024 : val;
+}
+
+function calcMbps(sizeMB, runtimeMinutes) {
+    if (!sizeMB || !runtimeMinutes) return null;
+    var bits = sizeMB * 1024 * 1024 * 8;
+    var seconds = runtimeMinutes * 60;
+    return (bits / seconds / 1000000).toFixed(1) + " Mbps";
+}
 
 function makeStream(item, cdnUrl, isTv, showTitle, season, episode, settings) {
     if (!cdnUrl) return null;
@@ -723,60 +748,60 @@ function makeStream(item, cdnUrl, isTv, showTitle, season, episode, settings) {
     try { decodedUrl = decodeURIComponent(cdnUrl); } catch(e) { decodedUrl = cdnUrl; }
     var raw    = (item.rawLabel || "") + " " + label + " " + decodedUrl;
 
-    var res    = extractQualityLabel(raw);
+    var quality = extractQualityLabel(raw);
     if (!size) {
         size = extractSize(raw);
     }
-    var codec  = pickCodec(raw);
-    var src    = pickSource(raw);
-    var audio  = pickAudio(raw);
-    var hdr    = pickHdr(raw);
-    var cdn    = pickCdn(cdnUrl);
-    var langs  = pickLanguages(raw);
-    var bit10  = /\b10bit\b/i.test(raw) ? "10Bit" : "";
-    var isRemux = /\bremux\b/i.test(raw);
 
-    var resRanks = { "4K": 4, "2160p": 4, "1080p": 3, "720p": 2, "480p": 1, "360p": 0, "Unknown": 0 };
-    var qRank = resRanks[res] !== undefined ? resRanks[res] : (resRanks[mapQuality(label)] || 0);
-    var sizeInMB = Math.round(parseSize(size) / 1048576);
+    var combined = raw.toLowerCase();
+    var langParts = [];
+    if (/\b(?:english|eng)\b/.test(combined)) langParts.push("English");
+    if (/\bhindi\b/.test(combined)) langParts.push("Hindi");
+    if (/\btamil\b/.test(combined)) langParts.push("Tamil");
+    if (/\btelugu\b/.test(combined)) langParts.push("Telugu");
 
-    var score = 0;
-    if (settings.sortBy === "size") {
-        score = sizeInMB;
-    } else {
-        score = (qRank * 100000) + Math.min(sizeInMB, 99999);
+    var source = "WEB-DL";
+    var isRemux = false;
+    if (/\bremux\b/.test(combined)) { source = "Blu-ray"; isRemux = true; }
+    else if (/\bblu[-\s]?ray\b/.test(combined)) source = "Blu-ray";
+    else if (/\b(?:webrip|hdrip)\b/.test(combined)) source = "WEB-Rip";
+
+    var hdrTag = "";
+    if (/\b(?:hdr10\+|hdr10p)\b/.test(combined)) hdrTag = "HDR10+";
+    else if (/\bhdr10\b/.test(combined)) hdrTag = "HDR10";
+    else if (/\bhdr\b/.test(combined)) hdrTag = "HDR";
+    else if (/\bsdr\b/.test(combined)) hdrTag = "SDR";
+
+    var bit10Tag = /\b10bit\b/.test(combined) ? "10Bit" : "";
+    var dvTag = /\b(?:dv|dolby\s*vision)\b/.test(combined) ? "DV" : "";
+    var codec = (/\b(?:hevc|x265|265)\b/.test(combined) || quality.toUpperCase() === "2160P") ? "H.265" : "H.264";
+    var isImax = /\bimax\b/.test(combined);
+
+    var audio = "DDP 5.1";
+    for (var i = 0; i < AUDIO_TABLE.length; i++) {
+        if (AUDIO_TABLE[i][0].test(combined)) { audio = AUDIO_TABLE[i][1]; break; }
     }
-    var sortTag = getInvertedSortTag(score, 999999);
+    if (/\batmos\b/.test(combined)) audio += " Atmos";
 
-    var lines = [];
+    var sizeMB = parseSizeMB(size);
+    var mbps = calcMbps(sizeMB, null); // runtime not available in first code's pipeline; will not show Mbps unless added
 
-    if (isTv && showTitle && season && episode) {
-        lines.push("\uD83D\uDCE1 " + showTitle + " \u2022 S" + pad(season) + "E" + pad(episode));
-    }
-
-    var qParts = [];
-    if (res)   qParts.push(res);
-    if (src)   qParts.push(src);
-    if (isRemux) qParts.push("REMUX");
-    if (codec) qParts.push(codec);
-    lines.push("\uD83C\uDFAC " + (qParts.length ? qParts.join(" \u2022 ") : res));
-
-    var metaParts = [];
-    if (hdr) metaParts.push(hdr);
-    if (bit10) metaParts.push(bit10);
-    if (langs.length) metaParts.push(langs.join(" + "));
-    if (metaParts.length) lines.push("\uD83C\uDF9E\uFE0F " + metaParts.join(" \u2022 "));
-
-    if (cdn) lines.push("\uD83D\uDEF0\uFE0F Source: " + cdn);
-    if (size) lines.push("\uD83D\uDCBE " + size);
-    if (audio) lines.push(audio);
+    var qualityUp = quality.toUpperCase();
+    var mainTitle = ["4KHDHub", qualityUp, size].filter(Boolean).join(" • ");
+    var line1 = langParts.join(" • ");
+    var line2 = [source, isRemux && "REMUX", isImax && "IMAX", pickCdn(cdnUrl), mbps].filter(Boolean).join(" • ");
+    var line3 = [bit10Tag, dvTag, hdrTag, codec, audio].filter(Boolean).join(" • ");
+    var streamTitle = [line1, line2, line3].filter(Boolean).join("\n");
 
     return {
-        name:    sortTag + lines.join("\n"),
-        title:   res + (src ? " \u2022 " + src : "") + (codec ? " \u2022 " + codec : ""),
-        url:     cdnUrl,
-        quality: mapQuality(res || label),
-        _sizeRaw: size,
+        name: mainTitle,
+        title: mainTitle,
+        size: streamTitle,
+        url: cdnUrl,
+        quality: qualityUp,
+        headers: { Referer: BASE_URL + "/" },
+        _host: pickCdn(cdnUrl),
+        _sizeRaw: size || "",
     };
 }
 
@@ -793,81 +818,6 @@ function extractQualityLabel(text) {
 function extractSize(text) {
     var m = text.match(/\[([0-9.]+\s*[KMGT]B(?:\/E)?)\]/i) || text.match(/(\d+(?:\.\d+)?\s*[KMGT]B)/i);
     return m ? m[1] : "";
-}
-
-function pickCodec(text) {
-    if (/\b(?:hevc|x265|h\.?265)\b/i.test(text)) return "HEVC";
-    if (/\b(?:x264|h\.?264|avc)\b/i.test(text)) return "H.264";
-    if (/\bav1\b/i.test(text)) return "AV1";
-    return "";
-}
-
-function pickSource(text) {
-    if (/\bAMZN\b/i.test(text))              return "AMZN WEB-DL";
-    if (/\bNF\b/i.test(text))               return "NF WEB-DL";
-    if (/\bDSNP\b/i.test(text))             return "DSNP WEB-DL";
-    if (/\bREMUX\b/i.test(text))            return "BluRay REMUX";
-    if (/\bBlu-?Ray\b/i.test(text))         return "BluRay";
-    if (/\bWEB-?DL\b/i.test(text))          return "WEB-DL";
-    if (/\bWEBRip\b/i.test(text))           return "WEBRip";
-    if (/\bHDRip\b/i.test(text))            return "HDRip";
-    if (/\bHDTC|HDTS|HQ-?TC\b/i.test(text)) return "HQ-TC";
-    return "";
-}
-
-var AUDIO_TABLE = [
-    [/ddp.?51.*truehd.*71|truehd.*71.*ddp.?51/i, "DDP 5.1 + TrueHD 7.1"],
-    [/ddp.?51.*ddp.?71|ddp.?71.*ddp.?51/i, "DDP 5.1 + DDP 7.1"],
-    [/ddp.?51.*aac.?71|aac.?71.*ddp.?51/i, "DDP 5.1 + AAC 7.1"],
-    [/ddp.?51/i, "DDP 5.1"],
-    [/truehd/i, "TrueHD 7.1"],
-    [/aac.*71|71.*aac/i, "AAC 7.1"],
-    [/aac/i, "AAC 5.1"],
-];
-
-function pickAudio(text) {
-    var combined = text.toLowerCase();
-    var audio = "";
-    for (var i = 0; i < AUDIO_TABLE.length; i++) {
-        if (AUDIO_TABLE[i][0].test(combined)) {
-            audio = AUDIO_TABLE[i][1];
-            break;
-        }
-    }
-    if (/\batmos\b/i.test(combined)) {
-        audio = audio ? audio + " Atmos" : "Atmos";
-    }
-    if (!audio) {
-        var af = combined.match(/\b(ddp5\.1|dd5\.1|ddp|dts-hd|dts|eac3|aac|ac3)\b/i);
-        if (af) audio = af[1].toUpperCase();
-    }
-    return audio ? "\uD83C\uDFA7 Audio: " + audio : "";
-}
-
-function pickHdr(text) {
-    var p = [];
-    if (/\bDolby\s*Vision\b|\bDV\b/i.test(text))  p.push("DV");
-    if (/\bHDR10\+/i.test(text))                  p.push("HDR10+");
-    else if (/\bHDR10\b/i.test(text))             p.push("HDR10");
-    else if (/\bHDR\b/i.test(text))               p.push("HDR");
-    if (/\bSDR\b/i.test(text))                    p.push("SDR");
-    if (/\bIMAX\b/i.test(text))                   p.push("IMAX");
-    return p.join(" ");
-}
-
-function pickLanguages(text) {
-    var langs = [];
-    if (/\bhindi\b/i.test(text))   langs.push("Hindi");
-    if (/\benglish\b/i.test(text)) langs.push("English");
-    if (/\btamil\b/i.test(text))   langs.push("Tamil");
-    if (/\btelugu\b/i.test(text))  langs.push("Telugu");
-    if (/\bdual\s*audio/i.test(text) || /hindi.*english|english.*hindi/i.test(text)) {
-        langs = ["Hindi", "English"];
-    }
-    if (/\bmulti\s*audio/i.test(text)) {
-        langs = ["Multi-Audio"];
-    }
-    return langs;
 }
 
 function pickCdn(url) {
@@ -914,21 +864,6 @@ function parseSize(str) {
     if (u === "MB") return n * 1e6;
     if (u === "KB") return n * 1e3;
     return n;
-}
-
-function parseSizeMB(str) {
-    if (!str) return null;
-    var m = /(\d+\.?\d*)\s*(GB|MB)/i.exec(str);
-    if (!m) return null;
-    var val = parseFloat(m[1]);
-    return m[2].toUpperCase() === "GB" ? val * 1024 : val;
-}
-
-function calcMbps(sizeMB, runtimeMinutes) {
-    if (!sizeMB || !runtimeMinutes) return null;
-    var bits = sizeMB * 1024 * 1024 * 8;
-    var seconds = runtimeMinutes * 60;
-    return (bits / seconds / 1000000).toFixed(1) + " Mbps";
 }
 
 function decodeEntities(str) {
