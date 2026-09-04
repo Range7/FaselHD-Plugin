@@ -1,7 +1,6 @@
 /**
  * 4KHDHub Nuvio Provider
- * Enhanced search + 1080p only + Sorted by size (largest first via invisible sort tag)
- * + Anime detection & rejection (Japanese Animation blocked)
+ * Enhanced search + 1080p only + Pixeldrain only + Largest Pixeldrain server
  */
 
 var BASE_URL = "https://4khdhub.one";
@@ -429,17 +428,26 @@ function processPostPage(html, postUrl, type, season, episode, showTitle, runtim
             }
         }
 
+        // فلترة 1080p فقط
         out = out.filter(function(s) {
             return (s.quality || "").toUpperCase() === "1080P";
         });
 
+        // فلترة إضافية: فقط Pixeldrain
+        out = out.filter(function(s) {
+            return (s._host === "PixelDrain" || s.url.toLowerCase().indexOf("pixeldrain") !== -1);
+        });
+
+        // ترتيب تنازلي حسب الحجم (الأكبر أولاً)
         if (out.length > 1) {
             out.sort(function(a, b) {
                 return parseSize(b._sizeRaw) - parseSize(a._sizeRaw);
             });
+            // نرجع فقط الأكبر حجماً
+            out = [out[0]];
         }
 
-        console.log("[4khdhub] final streams (1080p only, sorted by size): " + out.length);
+        console.log("[4khdhub] final streams (1080p Pixeldrain only, largest): " + out.length);
         return out;
     });
 }
