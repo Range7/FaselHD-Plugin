@@ -1,6 +1,7 @@
 /**
  * 4KHDHub Nuvio Provider
  * Enhanced search + 1080p only + Sorted by size (largest first via invisible sort tag)
+ * + Anime detection & rejection (Japanese Animation blocked)
  */
 
 var BASE_URL = "https://4khdhub.one";
@@ -157,6 +158,26 @@ function getStreams(tmdbId, mediaType, season, episode) {
             var rawDate = item.release_date || item.first_air_date || "";
             var year  = rawDate ? rawDate.substring(0, 4) : "";
             var runtime = null;
+
+            // ── فحص الأنمي: إذا كان النوع Animation واللغة الأصلية يابانية → رفض ─────
+            var genres = item.genres || [];
+            var isAnimation = false;
+            for (var g = 0; g < genres.length; g++) {
+                if (genres[g] && genres[g].name && genres[g].name.toLowerCase() === "animation") {
+                    isAnimation = true;
+                    break;
+                }
+            }
+            var originalLang = item.original_language || "";
+            var originCountry = item.origin_country || [];
+            var isJapaneseAnime = isAnimation && (originalLang === "ja" || originCountry.indexOf("JP") !== -1);
+            
+            if (isJapaneseAnime) {
+                console.log("[4khdhub] Japanese Anime detected, skipping: " + title);
+                return [];
+            }
+            // ───────────────────────────────────────────────────────────────────────────
+
             if (type === "tv") {
                 runtime = (item.episode_run_time && item.episode_run_time[0]) || null;
                 imdbId = imdbId || (item.external_ids && item.external_ids.imdb_id) || "";
@@ -408,12 +429,10 @@ function processPostPage(html, postUrl, type, season, episode, showTitle, runtim
             }
         }
 
-        // فلترة 1080p فقط
         out = out.filter(function(s) {
             return (s.quality || "").toUpperCase() === "1080P";
         });
 
-        // ترتيب تنازلي حسب الحجم (الأكبر أولاً)
         if (out.length > 1) {
             out.sort(function(a, b) {
                 return parseSize(b._sizeRaw) - parseSize(a._sizeRaw);
@@ -861,7 +880,6 @@ function makeStream(item, cdnUrl, isTv, showTitle, season, episode, settings, ru
     var line3 = [bit10Tag, dvTag, hdrTag, codec, audio].filter(Boolean).join(" • ");
     var streamTitle = [line1, line2, line3].filter(Boolean).join("\n");
 
-    // ── وسم غير مرئي للترتيب: الأكبر حجماً يصبح الأول ───────────────────────────
     var sizeInMB = Math.round(parseSize(size) / 1048576);
     var sortTag = getInvertedSortTag(sizeInMB, 999999);
 
