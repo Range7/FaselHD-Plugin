@@ -1,8 +1,11 @@
-// a111477 — 111477 provider for Nuvio (self-contained, no TMDB lookup)
-// name is multi-line, title is single-line (like 4KHDHub)
+// a111477 — 111477 provider for Nuvio (self-contained)
+// Tries IMDb id first, then TMDB. Returns all streams sorted by quality (1080p first).
 
 var SERVICE_ORIGIN = 'https://st.111477.xyz';
 var DEFAULT_HOST = 'https://a.111477.xyz/';
+var TMDB_API_KEY = 'b3556f3b206e16f82df4d1f6fd4545e6';
+var TMDB_DIRECT = 'https://api.themoviedb.org/3';
+var TMDB_PROXY = 'https://db.speedracelight.com/3';
 var UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36';
 var HEADERS = { 'User-Agent': UA, 'Accept': 'application/json' };
 
@@ -28,14 +31,40 @@ function b64url(str) {
   return out.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
+function fetchT(url, ms) {
+  return new Promise(function (resolve, reject) {
+    var finished = false;
+    var timer = setTimeout(function () { if (!finished) { finished = true; reject(new Error('timeout')); } }, ms || 10000);
+    fetch(url, { headers: HEADERS })
+      .then(function (res) { if (!finished) { finished = true; clearTimeout(timer); resolve(res); } })
+      .catch(function (e) { if (!finished) { finished = true; clearTimeout(timer); reject(e); } });
+  });
+}
+
+function resolveImdb(tmdbId, mediaType) {
+  var kind = mediaType === 'tv' ? 'tv' : 'movie';
+  var urls = [
+    TMDB_DIRECT + '/' + kind + '/' + tmdbId + '?api_key=' + TMDB_API_KEY + '&append_to_response=external_ids',
+    TMDB_PROXY + '/' + kind + '/' + tmdbId + '?append_to_response=external_ids'
+  ];
+  function tryNext(i) {
+    if (i >= urls.length) return Promise.resolve(null);
+    return fetchT(urls[i], 8000)
+      .then(function (res) { if (!res.ok) throw new Error('HTTP ' + res.status); return res.json(); })
+      .then(function (data) {
+        var imdbId = (data && data.external_ids && data.external_ids.imdb_id) || (data && data.imdb_id) || null;
+        return imdbId ? imdbId : tryNext(i + 1);
+      })
+      .catch(function () { return tryNext(i + 1); });
+  }
+  return tryNext(0);
+}
+
 function manifestBaseUrl() {
-  var host = DEFAULT_HOST;
-  var sort = 'file-desc';
-  var limit = 3;
-  var config = host.trim();
+  var config = DEFAULT_HOST.trim();
   if (!config.endsWith('/')) config += '/';
-  if (sort && sort !== 'none') config += '::sort=' + sort;
-  if (limit > 0 && limit !== 5) config += '::limit=' + limit;
+  config += '::sort=file-desc';
+  config += '::limit=3';
   return SERVICE_ORIGIN + '/config/' + b64url(config);
 }
 
@@ -103,9 +132,6 @@ function makeStream(it) {
   if (!url || String(url).indexOf('http') !== 0) return null;
 
   var quality = parseQuality(title);
-  if (quality === 'Auto') quality = '1080p';
-  if (quality !== '1080p') return null;
-
   var size = parseSize(title);
   var codec = parseCodec(title);
   var audio = parseAudio(title);
@@ -135,50 +161,49 @@ function makeStream(it) {
 }
 
 function getStreams(tmdbId, mediaType, season, episode) {
-  var addonBase = manifestBaseUrl();
-  var isTv = mediaType === 'tv';
   var rawId = String(tmdbId || '').replace(/^tt/, '');
+  return resolveImdb(tmdbId, mediaType).then(function (imdbId) {
+    var ids = [];
+    if (imdbId && imdbId.indexOf('tt') === 0) ids.push(imdbId);
+    ids.push('tmdb:' + rawId);
 
-  var ids = [];
-  if (String(tmdbId || '').indexOf('tt') === 0) ids.push(String(tmdbId));
-  ids.push('tmdb:' + rawId);
+    var addonBase = manifestBaseUrl();
+    var promises = [];
 
-  var promises = [];
+    for (var i = 0; i < ids.length; i++) {
+      var id = ids[i];
+      var ep = mediaType === 'tv'
+        ? addonBase + '/stream/series/' + id + ':' + (season || 1) + ':' + (episode || 1) + '.json'
+        : addonBase + '/stream/movie/' + id + '.json';
 
-  for (var i = 0; i < ids.length; i++) {
-    var id = ids[i];
-    var ep = isTv
-      ? addonBase + '/stream/series/' + id + ':' + (season || 1) + ':' + (episode || 1) + '.json'
-      : addonBase + '/stream/movie/' + id + '.json';
+      var p = fetchT(ep, 15000)
+        .then(function (res) { if (!res.ok) return []; return res.json(); })
+        .then(function (data) { return (data && data.streams) || []; })
+        .catch(function () { return []; });
 
-    var p = fetch(ep, { headers: HEADERS })
-      .then(function (res) { if (!res.ok) return []; return res.json(); })
-      .then(function (data) { return (data && data.streams) || []; })
-      .catch(function () { return []; });
-
-    promises.push(p);
-  }
-
-  return Promise.all(promises).then(function (groups) {
-    var out = [];
-    var seen = {};
-
-    for (var g = 0; g < groups.length; g++) {
-      var streams = groups[g];
-      for (var j = 0; j < streams.length; j++) {
-        var s = makeStream(streams[j]);
-        if (s && !seen[s.url]) {
-          seen[s.url] = true;
-          out.push(s);
-        }
-      }
+      promises.push(p);
     }
 
-    out.sort(function (a, b) {
-      return parseFloat(b._sizeRaw) - parseFloat(a._sizeRaw);
+    return Promise.all(promises).then(function (groups) {
+      var out = [];
+      var seen = {};
+      for (var g = 0; g < groups.length; g++) {
+        var streams = groups[g];
+        for (var j = 0; j < streams.length; j++) {
+          var s = makeStream(streams[j]);
+          if (s && !seen[s.url]) {
+            seen[s.url] = true;
+            out.push(s);
+          }
+        }
+      }
+      // رتب: 4K أولاً ثم 1080p ثم الباقي (لأن بعض الأفلام ليس لها 1080p)
+      var rank = { '4K': 4, '1080p': 3, '720p': 2, '480p': 1, 'Auto': 0 };
+      out.sort(function (a, b) {
+        return (rank[b.quality] || 0) - (rank[a.quality] || 0) || (parseFloat(b._sizeRaw) - parseFloat(a._sizeRaw));
+      });
+      return out;
     });
-
-    return out;
   }).catch(function () { return []; });
 }
 
