@@ -1,6 +1,5 @@
-// a111477 — 111477 provider for Nuvio (self-contained)
-// Shows all qualities, preferring 1080p first.
-// name and title are multi-line (details below) like 4KHDHub.
+// a111477 — 111477 provider for Nuvio (self-contained, bundled)
+// Rich metadata display like 4KHDHub: name multi-line, title short.
 
 var SERVICE_ORIGIN = 'https://st.111477.xyz';
 var DEFAULT_HOST = 'https://a.111477.xyz/';
@@ -116,12 +115,12 @@ function makeStream(it) {
   if (langs) details.push(langs);
   var detailsLine = details.join(' • ');
 
-  // نفس تنسيق 4KHDHub: name و title متعددي الأسطر
-  var fullName = detailsLine ? (mainLine + '\n' + detailsLine) : mainLine;
+  // نفس تنسيق 4KHDHub: name متعدد الأسطر، title سطر واحد
+  var nameMulti = detailsLine ? (mainLine + '\n' + detailsLine) : mainLine;
 
   return {
-    name: fullName,
-    title: fullName,
+    name: nameMulti,
+    title: mainLine,
     url: url,
     quality: quality,
     headers: HEADERS,
