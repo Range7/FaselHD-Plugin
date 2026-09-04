@@ -1,7 +1,7 @@
 /**
  * 111477 Nuvio Provider
  * Self-contained + Promise-based (no async/await)
- * Extracts ALL 1080p streams
+ * Extracts 1080p streams with flexible quality detection
  */
 
 var SERVICE_ORIGIN = 'https://st.111477.xyz';
@@ -12,7 +12,6 @@ var HEADERS = {
     'Accept': 'application/json, text/plain, */*'
 };
 
-// ── Base64 URL Encode ──────────────────────────────────────────────────────
 function base64UrlEncode(str) {
     try {
         if (typeof btoa === 'function') {
@@ -37,7 +36,6 @@ function base64UrlEncode(str) {
     return output.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
-// ── Base64 Decode ──────────────────────────────────────────────────────────
 function b64decode(str) {
     if (typeof atob === 'function') {
         try { return atob(str); } catch (e) {}
@@ -51,7 +49,6 @@ function b64decode(str) {
     return output;
 }
 
-// ── TMDB API Key ───────────────────────────────────────────────────────────
 function getTmdbKey() {
     try {
         if (typeof globalThis !== 'undefined') {
@@ -76,7 +73,6 @@ function getTmdbKey() {
     return b64decode(pool[Math.floor(Math.random() * pool.length)]);
 }
 
-// ── Fetch JSON ─────────────────────────────────────────────────────────────
 function fetchJson(url, timeout) {
     var options = {
         headers: HEADERS,
@@ -104,7 +100,6 @@ function fetchJson(url, timeout) {
         });
 }
 
-// ── TMDB Meta ──────────────────────────────────────────────────────────────
 function resolveMeta(tmdbId, mediaType) {
     var apiKey = getTmdbKey();
     var isTv = mediaType === 'tv';
@@ -133,7 +128,6 @@ function resolveMeta(tmdbId, mediaType) {
     return tryHost();
 }
 
-// ── Manifest Base URL ──────────────────────────────────────────────────────
 function manifestBaseUrl(host, sort, limit) {
     host = host || DEFAULT_HOST;
     sort = sort || 'file-desc';
@@ -145,11 +139,10 @@ function manifestBaseUrl(host, sort, limit) {
     return SERVICE_ORIGIN + '/config/' + base64UrlEncode(config);
 }
 
-// ── Quality Parser ─────────────────────────────────────────────────────────
 function parseQuality(label) {
     var l = String(label || '').toUpperCase();
     if (l.indexOf('4K') !== -1 || l.indexOf('2160') !== -1) return '4K';
-    if (l.indexOf('1080') !== -1 || l.indexOf('FHD') !== -1) return '1080p';
+    if (l.indexOf('1080') !== -1 || l.indexOf('FHD') !== -1 || l.indexOf('FULL HD') !== -1) return '1080p';
     if (l.indexOf('720') !== -1 || l.indexOf('HD') !== -1) return '720p';
     if (l.indexOf('480') !== -1) return '480p';
     return 'Unknown';
@@ -182,7 +175,7 @@ function sortByQuality(list) {
     });
 }
 
-// ── Main getStreams (Promise-based) ────────────────────────────────────────
+// ── Main getStreams ────────────────────────────────────────────────────────
 function getStreams(tmdbId, mediaType, season, episode) {
     return resolveMeta(tmdbId, mediaType)
         .then(function (meta) {
@@ -228,8 +221,16 @@ function getStreams(tmdbId, mediaType, season, episode) {
 
                             var label = it.title || it.name || '111477';
                             var quality = parseQuality(label);
+                            var lowerLabel = label.toLowerCase();
 
-                            if (quality !== '1080p') continue;
+                            var is1080 = lowerLabel.indexOf('1080') !== -1 || lowerLabel.indexOf('fhd') !== -1 || lowerLabel.indexOf('full hd') !== -1;
+                            var isLower = lowerLabel.indexOf('720') !== -1 || lowerLabel.indexOf('480') !== -1 || lowerLabel.indexOf('360') !== -1 || lowerLabel.indexOf('4k') !== -1 || lowerLabel.indexOf('2160') !== -1;
+
+                            // نسمح إذا كان 1080/FHD أو غير معروف (بدون مؤشر جودة أقل)
+                            if (!is1080 && isLower) continue;
+
+                            // إذا غير معروف، نعتبرها 1080p للتوافق
+                            if (quality === 'Unknown') quality = '1080p';
 
                             seen[url] = true;
                             out.push({
