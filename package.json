@@ -1,0 +1,13 @@
+{
+  "name": "nuvio-vod-providers",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Nuvio local scraper providers ported from PlayTorrioV3",
+  "scripts": {
+    "build": "node build.js",
+    "test": "node smoke.cjs"
+  },
+  "devDependencies": {
+    "esbuild": "^0.21.5"
+  }
+}
