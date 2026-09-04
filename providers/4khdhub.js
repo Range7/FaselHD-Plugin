@@ -351,18 +351,20 @@ function processPostPage(html, postUrl, type, season, episode, showTitle) {
             }
         }
 
-        var resOrder = { "4K": 4, "2160p": 4, "1080p": 3, "720p": 2, "480p": 1, "360p": 0, "HD": 1, "Unknown": 0 };
-        out.sort(function(a, b) {
-            if (settings.sortBy === "size") {
-                return parseSize(b._sizeRaw) - parseSize(a._sizeRaw);
-            }
-            var ra = resOrder[a.quality] !== undefined ? resOrder[a.quality] : 0;
-            var rb = resOrder[b.quality] !== undefined ? resOrder[b.quality] : 0;
-            if (rb !== ra) return rb - ra;
-            return parseSize(b._sizeRaw) - parseSize(a._sizeRaw);
+        // ── تعديل He: فقط 1080p + اختيار الأكبر حجماً ─────────────────────────────
+        out = out.filter(function(s) {
+            return s.quality === "1080p";
         });
 
-        console.log("[4khdhub] final streams: " + out.length + " (mode: " + settings.sortBy + ")");
+        if (out.length > 1) {
+            out.sort(function(a, b) {
+                return parseSize(b._sizeRaw) - parseSize(a._sizeRaw);
+            });
+            // نرجع فقط الأكبر (الأسرع عادةً)
+            out = [out[0]];
+        }
+
+        console.log("[4khdhub] final streams (1080p only, largest): " + out.length);
         return out;
     });
 }
