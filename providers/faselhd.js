@@ -1,4 +1,4 @@
-var BACKEND_URL = "https://YOUR_SERVER_URL.vercel.app/api/resolve";
+var BACKEND_URL = "https://fasel-h-dserver.vercel.app/api/resolve";
 
 function getStreams(tmdbId, mediaType, season, episode) {
   return new Promise(function(resolve, reject) {
