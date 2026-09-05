@@ -6,7 +6,7 @@
       "id": "faselhd",
       "name": "FaselHD",
       "description": "FaselHD Arabic movies & series - STRICT 1080p ONLY",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "author": "He",
       "supportedTypes": ["movie", "tv"],
       "filename": "providers/faselhd.js",
