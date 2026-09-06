@@ -1,8 +1,14 @@
 // DownloadEverything Provider for Nuvio — 111477-style rich metadata
+// Uses proxy to bypass Cloudflare 403 on slave API
 // Hermes-safe: no async/await, no const/let, no arrow functions, no URL constructor
 // Shows ALL servers, filters 4K & 1080p only
 
-var SLAVE_URL = "https://slave.downloadeverythingfromeverywhere.com/";
+// ═══ CONFIG: Replace with your Replit URL after deployment ═══
+var PROXY_URL = "https://de-proxy.vercel.app/api";
+// Example: "https://de-proxy-modark.repl.co/api"
+// ═══════════════════════════════════════════════════════════════
+
+var SLAVE_URL = PROXY_URL;
 var UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36";
 var TMDB_API_KEY = "b3556f3b206e16f82df4d1f6fd4545e6";
 var TMDB_BASE = "https://api.themoviedb.org/3";
@@ -302,11 +308,9 @@ function resolveLink(item) {
     var rawUrl = item.url || "";
     if (!rawUrl || shouldSkip(rawUrl)) return Promise.resolve(null);
 
-    // 1. Moviebox / HakunaMatata
     if (rawUrl.indexOf("hakunaymatata.com") !== -1) {
         return Promise.resolve({ url: rawUrl, provider: "Moviebox", headers: { "User-Agent": "Lavf/60.16.100" } });
     }
-    // 2. Pixeldrain
     else if (rawUrl.indexOf("pixeldrain.dev") !== -1 || rawUrl.indexOf("pixeldrain.com") !== -1) {
         var pm = rawUrl.match(/pixeldrain\.(?:dev|com)\/(?:u|l)\/([a-zA-Z0-9_-]+)/);
         if (pm) {
@@ -317,21 +321,18 @@ function resolveLink(item) {
             });
         }
     }
-    // 3. HubCloud
     else if (rawUrl.indexOf("hubcloud.") !== -1 || rawUrl.indexOf("vcloud.zip") !== -1) {
         return resolveHubCloud(rawUrl).then(function(url) {
             if (!url) return null;
             return { url: url, provider: "HubCloud", headers: { "User-Agent": UA } };
         });
     }
-    // 4. ClicknUpload
     else if (rawUrl.indexOf("clicknupload.") !== -1) {
         return resolveClicknUpload(rawUrl).then(function(url) {
             if (!url) return null;
             return { url: url, provider: "ClicknUpload", headers: { "User-Agent": UA } };
         });
     }
-    // 5. Direct MP4 / MKV
     else if (/\.(?:mp4|mkv)(?:\?|$)/i.test(rawUrl) &&
              rawUrl.indexOf("111477.xyz") === -1 &&
              rawUrl.indexOf("vadapav.mov") === -1 &&
@@ -360,24 +361,20 @@ function enrichStream(item, resolved, meta) {
     var combined = (rawTitle + " " + provider + " " + url).toLowerCase();
     var tags = Array.isArray(item.tags) ? item.tags : [];
 
-    // ── Extract Quality ─────────────────────────────────────────────
     var quality = extractQualityLabel(rawTitle + " " + tags.join(" "));
     if (quality === "Unknown") {
         quality = extractQualityLabel(url);
     }
     var qualityUp = quality.toUpperCase();
 
-    // ── Filter: 4K & 1080p ONLY ────────────────────────────────────
     if (qualityUp !== "4K" && qualityUp !== "2160P" && qualityUp !== "1080P") {
         return null;
     }
 
-    // ── Extract Size ────────────────────────────────────────────────
     var size = extractSize(rawTitle);
     if (!size) size = extractSize(tags.join(" "));
     if (!size) size = extractSize(url);
 
-    // ── Extract Language ────────────────────────────────────────────
     var langParts = [];
     if (/\b(?:english|eng)\b/.test(combined)) langParts.push("English");
     if (/\bhindi\b/.test(combined)) langParts.push("Hindi");
@@ -396,7 +393,6 @@ function enrichStream(item, resolved, meta) {
     if (/\bmulti\b/.test(combined)) langParts.push("Multi Audio");
     if (langParts.length === 0) langParts.push("English");
 
-    // ── Extract Source ────────────────────────────────────────────────
     var source = "WEB-DL";
     var isRemux = false;
     if (/\bremux\b/.test(combined)) { source = "Blu-ray"; isRemux = true; }
@@ -407,7 +403,6 @@ function enrichStream(item, resolved, meta) {
     else if (/\bcam\b/.test(combined)) source = "CAM";
     else if (/\bts\b/.test(combined)) source = "TS";
 
-    // ── Extract HDR / DV ────────────────────────────────────────────
     var hdrTag = "";
     if (/\b(?:hdr10\+|hdr10p)\b/.test(combined)) hdrTag = "HDR10+";
     else if (/\bhdr10\b/.test(combined)) hdrTag = "HDR10";
@@ -417,32 +412,25 @@ function enrichStream(item, resolved, meta) {
     var dvTag = /\b(?:dv|dolby\s*vision)\b/.test(combined) ? "DV" : "";
     var bit10Tag = /\b10bit\b/.test(combined) ? "10Bit" : "";
 
-    // ── Extract Codec ───────────────────────────────────────────────
     var codec = "H.264";
     if (/\b(?:hevc|x265|265|h265)\b/.test(combined)) codec = "H.265";
     else if (/\bav1\b/.test(combined)) codec = "AV1";
     else if (/\bvp9\b/.test(combined)) codec = "VP9";
     if (qualityUp === "4K" || qualityUp === "2160P") codec = "H.265";
 
-    // ── Extract Audio ───────────────────────────────────────────────
     var audio = "AAC 5.1";
     for (var i = 0; i < AUDIO_TABLE.length; i++) {
         if (AUDIO_TABLE[i][0].test(combined)) { audio = AUDIO_TABLE[i][1]; break; }
     }
     if (/\batmos\b/.test(combined)) audio += " Atmos";
 
-    // ── Extract FPS ─────────────────────────────────────────────────
     var fps = extractFps(rawTitle + " " + tags.join(" "));
-
-    // ── Extract Host / CDN ──────────────────────────────────────────
     var host = pickHost(url);
 
-    // ── Calculate Bitrate (approximate) ───────────────────────────
     var sizeMB = parseSizeMB(size);
     var runtime = guessRuntime(qualityUp);
     var mbps = calcMbps(sizeMB, runtime);
 
-    // ── Build Display Lines ───────────────────────────────────────
     var mainTitleParts = [provider, qualityUp];
     if (size) mainTitleParts.push(size);
     var mainTitle = "";
@@ -482,13 +470,11 @@ function enrichStream(item, resolved, meta) {
         }
     }
 
-    // ── Sort Tag (by quality priority, then size) ───────────────────
     var qualityScore = qualityUp === "4K" ? 4000 : qualityUp === "2160P" ? 4000 : 3000;
     var sizeScore = Math.round(parseSize(size) / 1048576);
     var totalScore = qualityScore + sizeScore;
     var sortTag = getInvertedSortTag(totalScore, 999999);
 
-    // ── Headers ─────────────────────────────────────────────────────
     var headers = resolved.headers || { "User-Agent": UA };
 
     return {
@@ -530,10 +516,8 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         }
 
         var bodyStr = JSON.stringify(payload);
-        console.log("[DE] Slave payload: " + bodyStr);
+        console.log("[DE] Payload: " + bodyStr);
 
-        // Build headers WITHOUT Origin/Referer — let runtime handle them
-        // Some servers reject when Origin doesn't match expected domain
         var reqOpts = {
             method: "POST",
             headers: {
@@ -548,17 +532,17 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
 
         return fetchT(SLAVE_URL, reqOpts, 20000)
         .then(function(r) {
-            console.log("[DE] Slave status: " + r.status);
+            console.log("[DE] Status: " + r.status);
             if (!r.ok) {
                 return r.text().then(function(errBody) {
-                    console.log("[DE] Slave error: " + errBody);
+                    console.log("[DE] Error: " + errBody);
                     throw new Error("Slave " + r.status);
                 });
             }
             return r.text();
         })
         .then(function(text) {
-            console.log("[DE] Slave response len=" + text.length);
+            console.log("[DE] Response len=" + text.length);
             if (!text || text.length < 10) {
                 console.log("[DE] Empty response");
                 return [];
