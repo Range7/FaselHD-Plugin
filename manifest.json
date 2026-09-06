@@ -74,7 +74,7 @@
       "version": "2.1.0",
       "author": "Modark",
       "supportedTypes": ["movie", "tv"],
-      "filename": "providers/provider/downeverything.js",
+      "filename": "providers/downeverything.js",
       "enabled": true,
       "formats": ["mp4", "mkv"],
       "logo": "https://www.google.com/s2/favicons?domain=downloadeverythingfromeverywhere.com&sz=128",
