@@ -522,28 +522,48 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             title: meta.title || ""
         };
         if (meta.year) payload.year = String(meta.year);
-        if (tmdbId) payload.tmdb_id = tmdbId;
+        if (tmdbId) payload.tmdb_id = String(tmdbId);
         if (meta.imdbId) payload.imdb_id = meta.imdbId;
         if (isTv) {
-            payload.season = season;
-            payload.episode = episode;
+            payload.season = String(season);
+            payload.episode = String(episode);
         }
 
-        return fetchT(SLAVE_URL, {
+        var bodyStr = JSON.stringify(payload);
+        console.log("[DE] Slave payload: " + bodyStr);
+
+        // Build headers WITHOUT Origin/Referer — let runtime handle them
+        // Some servers reject when Origin doesn't match expected domain
+        var reqOpts = {
             method: "POST",
             headers: {
                 "User-Agent": UA,
-                "Origin": "https://downloadeverythingfromeverywhere.com",
-                "Referer": "https://downloadeverythingfromeverywhere.com/",
-                "Content-Type": "application/json"
+                "Accept": "application/json, text/plain, */*",
+                "Accept-Language": "en-US,en;q=0.9",
+                "Content-Type": "application/json; charset=utf-8",
+                "DNT": "1"
             },
-            body: JSON.stringify(payload)
-        }, 20000)
+            body: bodyStr
+        };
+
+        return fetchT(SLAVE_URL, reqOpts, 20000)
         .then(function(r) {
-            if (!r.ok) throw new Error("Slave API " + r.status);
+            console.log("[DE] Slave status: " + r.status);
+            if (!r.ok) {
+                return r.text().then(function(errBody) {
+                    console.log("[DE] Slave error: " + errBody);
+                    throw new Error("Slave " + r.status);
+                });
+            }
             return r.text();
         })
         .then(function(text) {
+            console.log("[DE] Slave response len=" + text.length);
+            if (!text || text.length < 10) {
+                console.log("[DE] Empty response");
+                return [];
+            }
+
             var lines = text.split(/\r?\n/);
             var promises = [];
             var totalHits = 0;
@@ -558,13 +578,13 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                         var site = parsed.site || "DownloadEverything";
                         var links = parsed.links;
                         totalHits += links.length;
+                        console.log("[DE] Hit from " + site + ": " + links.length + " link(s)");
 
                         for (var j = 0; j < links.length; j++) {
                             var linkItem = links[j];
                             if (!linkItem || typeof linkItem !== "object") continue;
                             linkItem.site = site;
 
-                            // Pre-check quality before resolving
                             var preTags = Array.isArray(linkItem.tags) ? linkItem.tags : [];
                             var preQuality = extractQualityLabel((linkItem.name || "") + " " + preTags.join(" "));
                             if (preQuality === "Unknown") preQuality = extractQualityLabel(linkItem.url || "");
@@ -589,10 +609,12 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                             })(linkItem);
                         }
                     }
-                } catch (_) {}
+                } catch (e) {
+                    console.log("[DE] Parse error: " + e.message);
+                }
             }
 
-            console.log("[DE] Total candidates: " + totalHits + ", skipped (not 4K/1080p): " + skippedQuality + ", resolving: " + promises.length);
+            console.log("[DE] Candidates=" + totalHits + " skipped=" + skippedQuality + " resolving=" + promises.length);
             if (promises.length === 0) return [];
 
             return Promise.all(promises).then(function(results) {
@@ -605,7 +627,6 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                         out.push(s);
                     }
                 }
-                // Sort: 4K first, then 1080p
                 out.sort(function(a, b) {
                     var qa = a.quality === "4K" || a.quality === "2160P" ? 2 : 1;
                     var qb = b.quality === "4K" || b.quality === "2160P" ? 2 : 1;
@@ -614,10 +635,14 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 console.log("[DE] Final streams: " + out.length);
                 return out;
             });
+        })
+        .catch(function(e) {
+            console.error("[DE] Slave failed: " + e.message);
+            return [];
         });
     })
     .catch(function(e) {
-        console.error("[DE] Fatal error: " + e.message);
+        console.error("[DE] Fatal: " + e.message);
         return [];
     });
 }
