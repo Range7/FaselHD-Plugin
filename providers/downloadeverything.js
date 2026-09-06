@@ -1,12 +1,13 @@
 // DownloadEverything Provider for Nuvio — 111477-style rich metadata
-// Uses proxy to bypass Cloudflare 403 on slave API
+// Uses Cloudflare Worker proxy to bypass Cloudflare 403 on slave API
 // Hermes-safe: no async/await, no const/let, no arrow functions, no URL constructor
 // Shows ALL servers, filters 4K & 1080p only
 
-// ═══ CONFIG: Replace with your Replit URL after deployment ═══
-var PROXY_URL = "https://de-proxy.vercel.app/api";
-// Example: "https://de-proxy-modark.repl.co/api"
-// ═══════════════════════════════════════════════════════════════
+// ═══ CONFIG: Replace with your Cloudflare Worker URL after deployment ═══
+var PROXY_URL = "https://de-proxyv2.polmjod-eb8.workers.dev
+";
+// Example: "https://de-proxy-modark.workers.dev"
+// ════════════════════════════════════════════════════════════════════════
 
 var SLAVE_URL = PROXY_URL;
 var UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36";
