@@ -68,13 +68,13 @@
       "contentLanguage": ["ar", "en", "ko", "zh", "ja"]
     },
     {
-      "id": "downloadeverything",
-      "name": "DownloadEverything",
-      "description": "DownloadEverything — 4K & 1080p only. All servers with rich metadata (Pixeldrain, HubCloud, ClicknUpload, Moviebox, direct MP4/MKV)",
+      "id": "knaben",
+      "name": "knaben",
+      "description": "knaben — 4K & 1080p only. All servers with rich metadata (Pixeldrain, HubCloud, ClicknUpload, Moviebox, direct MP4/MKV)",
       "version": "2.0.0",
       "author": "Modark",
       "supportedTypes": ["movie", "tv"],
-      "filename": "providers/downloadeverything.js",
+      "filename": "providers/knaben.js",
       "enabled": true,
       "formats": ["mp4", "mkv"],
       "logo": "https://www.google.com/s2/favicons?domain=downloadeverythingfromeverywhere.com&sz=128",
