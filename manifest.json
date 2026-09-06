@@ -71,7 +71,7 @@
       "id": "knaben",
       "name": "knaben",
       "description": "knaben — 4K & 1080p only. All servers with rich metadata (Pixeldrain, HubCloud, ClicknUpload, Moviebox, direct MP4/MKV)",
-      "version": "2.0.0",
+      "version": "2.1.0",
       "author": "Modark",
       "supportedTypes": ["movie", "tv"],
       "filename": "providers/knaben.js",
