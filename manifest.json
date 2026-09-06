@@ -71,7 +71,7 @@
       "id": "downloadeverything",
       "name": "DownloadEverything",
       "description": "DownloadEverything — 4K & 1080p only. All servers with rich metadata (Pixeldrain, HubCloud, ClicknUpload, Moviebox, direct MP4/MKV)",
-      "version": "1.1.0",
+      "version": "1.2.0",
       "author": "Modark",
       "supportedTypes": ["movie", "tv"],
       "filename": "providers/downloadeverything.js",
