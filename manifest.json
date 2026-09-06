@@ -68,6 +68,19 @@
       "contentLanguage": ["ar", "en", "ko", "zh", "ja"]
     },
     {
+      "id": "downloadeverything",
+      "name": "DownloadEverything",
+      "description": "DownloadEverything — 4K & 1080p only. All servers with rich metadata (Pixeldrain, HubCloud, ClicknUpload, Moviebox, direct MP4/MKV)",
+      "version": "1.0.0",
+      "author": "Modark",
+      "supportedTypes": ["movie", "tv"],
+      "filename": "providers/downloadeverything.js",
+      "enabled": true,
+      "formats": ["mp4", "mkv"],
+      "logo": "https://www.google.com/s2/favicons?domain=downloadeverythingfromeverywhere.com&sz=128",
+      "contentLanguage": ["en"]
+    },
+    {
       "id": "nuvio-cee",
       "name": "Cee",
       "description": "Cee - Arabic movies & series with multi-quality streams",
