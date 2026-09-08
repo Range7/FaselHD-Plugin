@@ -1,5 +1,5 @@
 // language: JavaScript, file: 2peckle_enhanced.js, runtime: Node.js / React Native (Hermes-safe)
-// *res_4k يجب أن يكون true وإلا لن يرجع PenguPlay أي روابط 4K — الفلترة النهائية تحذف أي جودة غير 4K أو 1080P*
+// *الاختيار النهائي: أكبر ستريم 4K وأكبر ستريم 1080P فقط — العنوان يعرض الحجم بوضوح*
 
 var __async = (__this, __arguments, generator) => {
   return new Promise((resolve, reject) => {
@@ -204,6 +204,13 @@ function calcMbps(sizeMB, runtimeMinutes) {
   return (bits / seconds / 1000000).toFixed(1) + " Mbps";
 }
 
+// ── تنسيق الحجم بشكل موحد ────────────────────────────────────────────────
+function formatSize(sizeMB) {
+  if (!sizeMB || sizeMB <= 0) return "";
+  if (sizeMB >= 1024) return (sizeMB / 1024).toFixed(1) + " GB";
+  return Math.round(sizeMB) + " MB";
+}
+
 // ── إثراء معلومات كل ستريم ──────────────────────────────────────────────
 function enrichStream(s, meta) {
   var rawTitle = s.title || s.name || "";
@@ -217,6 +224,7 @@ function enrichStream(s, meta) {
   var sizeStr = extractSizeString(fullText);
   if (!sizeStr) sizeStr = extractSizeString(url);
   var sizeMB = extractSizeMB(sizeStr || fullText);
+  var sizeDisplay = formatSize(sizeMB);
 
   var langParts = [];
   if (/\b(?:english|eng)\b/.test(combined)) langParts.push("English");
@@ -270,14 +278,8 @@ function enrichStream(s, meta) {
   var runtime = 120;
   var mbps = calcMbps(sizeMB, runtime);
 
-  var mainTitleParts = ["2Peckle", qualityUp, sizeStr];
-  var mainTitle = "";
-  for (var ti = 0; ti < mainTitleParts.length; ti++) {
-    if (mainTitleParts[ti]) {
-      if (mainTitle) mainTitle += " • ";
-      mainTitle += mainTitleParts[ti];
-    }
-  }
+  // العنوان الرئيسي: الجودة + الحجم فقط
+  var mainTitle = "2Peckle " + qualityUp + (sizeDisplay ? " " + sizeDisplay : "");
 
   var lineA = langParts.join(" • ");
 
@@ -335,6 +337,7 @@ function enrichStream(s, meta) {
     size: streamTitle,
     url: url,
     quality: qualityUp,
+    _sizeMB: sizeMB,
     headers: headers,
     behaviorHints: {
       notWebReady: false,
@@ -343,7 +346,27 @@ function enrichStream(s, meta) {
   };
 }
 
-// ── جلب الستريمات + فلترة 4K و 1080P فقط ──────────────────────────────
+// ── اختيار الأكبر حجماً لكل جودة ────────────────────────────────────────
+function pickLargestPerQuality(streams) {
+  var best4K = null;
+  var best1080 = null;
+
+  for (var i = 0; i < streams.length; i++) {
+    var s = streams[i];
+    if (s.quality === "4K") {
+      if (!best4K || s._sizeMB > best4K._sizeMB) best4K = s;
+    } else if (s.quality === "1080P") {
+      if (!best1080 || s._sizeMB > best1080._sizeMB) best1080 = s;
+    }
+  }
+
+  var result = [];
+  if (best4K) result.push(best4K);
+  if (best1080) result.push(best1080);
+  return result;
+}
+
+// ── جلب الستريمات: 4K و 1080P فقط ──────────────────────────────────────
 function getPenguStreams(imdbId, mediaType, season, episode) {
   return __async(this, null, function* () {
     var config = buildConfig();
@@ -397,7 +420,11 @@ function getPenguStreams(imdbId, mediaType, season, episode) {
       }
 
       console.log("[2Peckle] Filtered (4K/1080P): " + enriched.length);
-      return enriched;
+
+      var largest = pickLargestPerQuality(enriched);
+      console.log("[2Peckle] Final: " + largest.length + " streams (largest per quality)");
+
+      return largest;
 
     } catch (e) {
       console.log("[2Peckle] PenguPlay error: " + (e.message || e));
@@ -406,7 +433,7 @@ function getPenguStreams(imdbId, mediaType, season, episode) {
   });
 }
 
-// ── ترتيب حسب الجودة ─────────────────────────────────────────────────────
+// ── ترتيب: 4K أولاً ─────────────────────────────────────────────────────
 var QUALITY_RANK = { "4K": 5, "2160P": 5, "1080P": 4, "720P": 3, "480P": 2, "CAM": 1 };
 
 function sortStreams(streams) {
