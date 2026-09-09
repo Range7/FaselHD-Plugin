@@ -1,11 +1,13 @@
 /**
  * Krmizi / Qrmzi provider for Nuvio — STRICT 1080p ONLY Edition
- * Version: 1.1.0
+ * Version: 1.1.1
  *
  * Based on renoomon's krmizi provider, modified to return ONLY 1080p streams.
  * All non-1080p qualities are filtered out at every stage.
  *
  * v1.1.0: Fixed multi-season episode numbering.
+ * v1.1.1: Fixed resolveAnaPlayer rejecting non-season-1 episodes
+ *          when no explicit S#E# info exists in the player page.
  *         Qrmzi uses continuous numbering across seasons (S1E1=1..S1E18=18, S2E1=19...).
  *         When Nuvio sends season>1, we compute the site episode number and search for it.
  */
@@ -14,7 +16,7 @@
 
 var cheerio = require("cheerio-without-node-native");
 
-var VERSION = "1.1.0";
+var VERSION = "1.1.1";
 var TMDB_BASE = "https://www.themoviedb.org";
 var SITE_BASES = [
   "https://www.qrmzi.tv",
@@ -1023,9 +1025,16 @@ function resolveEmbedTarget(target, expected, streams, seenStreams) {
 
   return fetchTextInfo(url, target.referer, originOf(target.referer)).then(function (result) {
     var explicit = explicitSeasonEpisode(result.html + " " + result.url);
-    if (explicit && (explicit.season !== expected.season || explicit.episode !== expected.episode)) {
-      logFailure("player_identity_mismatch", target.label);
-      return;
+    var siteEp = siteEpisodeNumber(expected.season, expected.episode);
+    if (explicit) {
+      if (explicit.season !== expected.season) {
+        logFailure("player_identity_mismatch", target.label + " S" + explicit.season);
+        return;
+      }
+      if (explicit.episode !== expected.episode && explicit.episode !== siteEp) {
+        logFailure("player_identity_mismatch", target.label + " E" + explicit.episode);
+        return;
+      }
     }
     var entries = mediaEntriesFromHtml(result.html);
     var jobs = [];
@@ -1039,17 +1048,26 @@ function resolveEmbedTarget(target, expected, streams, seenStreams) {
 function resolveAnaPlayer(playerUrl, episodeUrl, wantedSeason, wantedEpisode) {
   var streams = [];
   var seenStreams = {};
+  var siteEp = siteEpisodeNumber(wantedSeason, wantedEpisode);
 
   return fetchTextInfo(playerUrl, episodeUrl, originOf(episodeUrl)).then(function (player) {
     var explicit = explicitSeasonEpisode(player.url + " " + player.html);
-    if (explicit && (explicit.season !== wantedSeason || explicit.episode !== wantedEpisode)) {
-      logFailure("player_identity_mismatch", "AnaPlayer");
-      return [];
+    if (explicit) {
+      if (explicit.season !== wantedSeason) {
+        logFailure("player_identity_mismatch", "AnaPlayer S" + explicit.season);
+        return [];
+      }
+      if (explicit.episode !== wantedEpisode && explicit.episode !== siteEp) {
+        logFailure("player_identity_mismatch", "AnaPlayer E" + explicit.episode);
+        return [];
+      }
     }
-    if (!explicit && wantedSeason !== 1) {
-      logFailure("player_identity_mismatch", "season_unverifiable");
-      return [];
-    }
+    /*
+     * No explicit S#E# info found in the player page.
+     * v1.1.0: We already verified the episode number in verifyEpisodePage().
+     * The player URL came from that verified episode page, so we trust it.
+     * Do NOT reject here — allow the streams to be resolved.
+     */
 
     var servers = collectAnaServers(player.html, player.url);
     if (!servers.length) {
