@@ -68,13 +68,13 @@
       "contentLanguage": ["ar", "en", "ko", "zh", "ja"]
     },
     {
-      "id": "2peckle",
-      "name": "2Peckle",
-      "description": "2Peckle — STRICT 4K & 1080p ONLY. Rich metadata (Size, Codec, Audio, Host) with largest file priority",
-      "version": "1.0.2",
+      "id": "aiostream",
+      "name": "aiostream",
+      "description": "aiostream — STRICT 4K & 1080p ONLY. Rich metadata (Size, Codec, Audio, Host) with largest file priority",
+      "version": "1.0.0",
       "author": "He",
       "supportedTypes": ["movie", "tv"],
-      "filename": "providers/2peckle.js",
+      "filename": "providers/aiostream.js",
       "enabled": true,
       "formats": ["mp4", "mkv"],
       "logo": "https://www.google.com/s2/favicons?domain=pengu.uk&sz=128",
