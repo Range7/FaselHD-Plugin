@@ -71,7 +71,7 @@
       "id": "aiostream",
       "name": "aiostream",
       "description": "aiostream — STRICT 4K & 1080p ONLY. Rich metadata (Size, Codec, Audio, Host) with largest file priority",
-      "version": "1.4.0",
+      "version": "1.4.10",
       "author": "He",
       "supportedTypes": ["movie", "tv"],
       "filename": "providers/aiostream.js",
