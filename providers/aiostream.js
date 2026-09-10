@@ -1,6 +1,6 @@
 /**
  * AIOStreams Provider for Nuvio — 4K/1080p ONLY + Rich Metadata
- * Version: 1.0.0
+ * Version: 1.1.0
  *
  * Sources streams from AIOStreams (aiostreamso-youness.ufcfan.org)
  * Filters: 4K + 1080p ONLY, working servers only
@@ -14,7 +14,7 @@
 // CONFIGURATION
 // ═════════════════════════════════════════════════════════════════════════════
 
-var VERSION = "1.0.0";
+var VERSION = "1.1.0";
 var UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 var TMDB_API_KEY = "b3556f3b206e16f82df4d1f6fd4545e6";
 var TMDB_DIRECT = "https://api.themoviedb.org/3";
@@ -220,41 +220,18 @@ function getInvertedSortTag(score, maxScore) {
 // ═════════════════════════════════════════════════════════════════════════════
 
 /**
- * Quick HEAD/GET check to verify a stream URL is reachable.
- * Returns Promise resolving to true (working) or false (dead).
+ * v1.1.0: Removed server health check — it caused hangs in Nuvio/Hermes.
+ * Instead we filter by URL pattern to exclude known dead/broken hosts.
+ * AIOStreams already pre-verifies its sources.
  */
-function checkServerHealth(url, headers) {
-  return new Promise(function (resolve) {
-    var timeout = setTimeout(function () {
-      resolve(false);
-    }, SERVER_CHECK_TIMEOUT);
-
-    fetchT(url, {
-      method: "HEAD",
-      headers: headers || { "User-Agent": UA }
-    }, SERVER_CHECK_TIMEOUT)
-      .then(function (r) {
-        clearTimeout(timeout);
-        if (r.ok) return resolve(true);
-        /* Some servers reject HEAD but allow GET */
-        if (r.status === 405 || r.status === 403 || r.status === 400) {
-          return fetchT(url, {
-            method: "GET",
-            headers: headers || { "User-Agent": UA },
-            skipSizeCheck: true
-          }, SERVER_CHECK_TIMEOUT)
-            .then(function (r2) {
-              resolve(r2.ok || r2.status === 405 || r2.status === 403);
-            })
-            .catch(function () { resolve(false); });
-        }
-        resolve(false);
-      })
-      .catch(function () {
-        clearTimeout(timeout);
-        resolve(false);
-      });
-  });
+function isLikelyWorking(url) {
+  if (!url || String(url).indexOf("http") !== 0) return false;
+  var low = String(url).toLowerCase();
+  /* Exclude obviously broken patterns */
+  if (low.indexOf("404") !== -1) return false;
+  if (low.indexOf("error") !== -1) return false;
+  if (low.indexOf("notfound") !== -1) return false;
+  return true;
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -528,43 +505,17 @@ function getStreams(tmdbId, mediaType, season, episode) {
               return tryId(idx + 1);
             }
 
-            /* ── Server Health Check ── */
-            log("checking_servers", "verifying " + Math.min(enriched.length, MAX_SERVER_CHECKS) + " servers...");
-
-            var checkJobs = [];
-            var toCheck = enriched.slice(0, MAX_SERVER_CHECKS);
-            var unchecked = enriched.slice(MAX_SERVER_CHECKS);  /* Trust beyond limit */
-
-            for (var c = 0; c < toCheck.length; c++) {
-              (function (stream) {
-                checkJobs.push(
-                  checkServerHealth(stream.url, stream.headers).then(function (alive) {
-                    if (alive) {
-                      log("server_ok", stream._host + " • " + stream._qualityUp);
-                      return stream;
-                    } else {
-                      log("server_dead", stream._host + " • " + stream.url.substring(0, 60));
-                      return null;
-                    }
-                  })
-                );
-              })(toCheck[c]);
+            /* ── Filter obviously broken URLs (v1.1.0: no health check) ── */
+            var working = [];
+            for (var w = 0; w < enriched.length; w++) {
+              if (isLikelyWorking(enriched[w].url)) {
+                working.push(enriched[w]);
+              }
             }
 
-            return Promise.all(checkJobs).then(function (results) {
-              var working = [];
-              for (var r = 0; r < results.length; r++) {
-                if (results[r]) working.push(results[r]);
-              }
-              /* Add unchecked streams (trusted) */
-              for (var u = 0; u < unchecked.length; u++) {
-                working.push(unchecked[u]);
-              }
-
-              log("working_servers", working.length + " of " + enriched.length);
-              out = out.concat(working);
-              return Promise.resolve();
-            });
+            log("working_servers", working.length + " of " + enriched.length);
+            out = out.concat(working);
+            return Promise.resolve();
           })
           .catch(function (e) {
             log("error", id + ": " + e.message);
