@@ -1,13 +1,12 @@
 /**
- * AIOStreams Provider for Nuvio — 4K/1080p ONLY + Accurate Metadata
- * Version: 1.4.0 (Guaranteed Largest from Each Host)
+ * AIOStreams Provider for Nuvio — 4K/1080p ONLY + Verified + Host-Deduped
+ * Version: 1.2.0
  *
- * Sources streams from AIOStreams
- * Filters: 4K + 1080p ONLY, Fast servers only
- * Dedup: From each host, keeps ONLY the largest size
- * Sorting: 4K (Largest -> Smallest), then 1080p (Largest -> Smallest)
- * Accuracy: Only shows verified information, no assumptions
- * Hermes-safe: no async/await, no const/let, no arrow functions
+ * - Only WORKING servers (real HTTP Range probe)
+ * - Only FAST servers (response within FAST_THRESHOLD_MS)
+ * - No duplicate host+quality
+ * - Sort: 4K (largest→smallest) then 1080p (largest→smallest)
+ * - Hermes-safe: no async/await, no const/let, no arrow functions
  */
 
 "use strict";
@@ -16,7 +15,7 @@
 // CONFIGURATION
 // ═════════════════════════════════════════════════════════════════════════════
 
-var VERSION = "1.4.0";
+var VERSION = "1.2.0";
 var UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 var TMDB_API_KEY = "b3556f3b206e16f82df4d1f6fd4545e6";
 var TMDB_DIRECT = "https://api.themoviedb.org/3";
@@ -24,12 +23,12 @@ var TMDB_PROXY = "https://db.speedracelight.com/3";
 
 var AIOSTREAMS_BASE = "https://aiostreamso-youness.ufcfan.org/stremio/c084b129-0660-465c-9496-5617c07a5898/eyJpIjoiWGM5RldyY0xsQlkwZ3EzeG00dEVvUT09IiwiZSI6IkZjeGQ4ck5qWURqUzVTL3VBZGFLQ1hJWEtZSEc4Mm9qUWM0THVlMnVoSlE9IiwidCI6ImEifQ";
 
-var ALLOWED_QUALITIES = { "4K": true, "2160P": true, "2160p": true, "1080P": true, "1080p": true };
+var ALLOWED_QUALITIES = { "4K": true, "2160P": true, "1080P": true };
 
-var BLOCKED_SLOW_HOSTS = [
-  "doodstream", "dood", "mixdrop", "streamtape", "vidoza", 
-  "upstream", "voe", "fastdl", "sooti", "pengu"
-];
+/* Server health check knobs */
+var MAX_SERVER_CHECKS = 12;       // parallel probes
+var SERVER_CHECK_TIMEOUT = 6000;  // hard per-server timeout
+var FAST_THRESHOLD_MS = 4500;     // servers slower than this are dropped
 
 var _metaCache = {};
 var _tmdbPool = [TMDB_DIRECT, TMDB_PROXY];
@@ -43,11 +42,6 @@ function log(key, value) {
   console.log("[AIOStreams v" + VERSION + "] " + key + suffix);
 }
 
-function logFailure(reason, detail) {
-  var suffix = detail ? " detail=" + String(detail) : "";
-  console.log("[AIOStreams v" + VERSION + "] failure=" + reason + suffix);
-}
-
 function fetchT(url, opts, ms) {
   ms = ms || 10000;
   return Promise.race([
@@ -56,6 +50,16 @@ function fetchT(url, opts, ms) {
       setTimeout(function () { reject(new Error("timeout")); }, ms);
     })
   ]);
+}
+
+function copyHeaders(src) {
+  var out = {};
+  if (src) {
+    for (var k in src) {
+      if (Object.prototype.hasOwnProperty.call(src, k)) out[k] = src[k];
+    }
+  }
+  return out;
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -84,13 +88,14 @@ function resolveMeta(tmdbId, mediaType) {
         var dateStr = kind === "tv" ? j.first_air_date : j.release_date;
         var year = dateStr ? parseInt(String(dateStr).slice(0, 4), 10) : null;
         var imdbId = (j.external_ids && j.external_ids.imdb_id) || j.imdb_id || null;
-        var meta = { 
-          title: title, 
-          year: year, 
-          imdbId: imdbId, 
-          kind: kind, 
-          runtime: j.runtime || (kind === "tv" ? 45 : 120) 
-        };
+        var runtime = 0;
+        if (kind === "movie") {
+          runtime = j.runtime || 0;
+        } else {
+          var runs = j.episode_run_time;
+          if (runs && runs.length > 0) runtime = runs[0];
+        }
+        var meta = { title: title, year: year, imdbId: imdbId, kind: kind, runtime: runtime };
         _metaCache[ck] = meta;
         return meta;
       })
@@ -101,7 +106,7 @@ function resolveMeta(tmdbId, mediaType) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// ACCURATE METADATA EXTRACTION
+// METADATA EXTRACTION
 // ═════════════════════════════════════════════════════════════════════════════
 
 var AUDIO_TABLE = [
@@ -116,42 +121,31 @@ var AUDIO_TABLE = [
   [/eac3/i, "EAC3"],
   [/dts.*hd/i, "DTS-HD"],
   [/dts/i, "DTS"],
-  [/mp3/i, "MP3"],
+  [/mp3/i, "MP3"]
 ];
 
 function extractQualityLabel(text) {
   var t = String(text || "").toUpperCase();
-  if (/\b(2160P|4K|UHD)\b/.test(t)) return "4K";
-  if (/\b1080P\b/.test(t)) return "1080P";
-  if (/\b720P\b/.test(t)) return "720P";
-  if (/\b480P\b/.test(t)) return "480P";
-  return null;
+  if (/2160|\b4K\b|UHD/.test(t)) return "4K";
+  if (/1080/.test(t)) return "1080P";
+  if (/720/.test(t)) return "720P";
+  if (/480/.test(t)) return "480P";
+  if (/\bCAM\b/.test(t)) return "CAM";
+  return "";
 }
 
 function extractSize(text) {
-  text = String(text || "");
-  var m = text.match(/\[([0-9.]+\s*[KMGT]B(?:\/E)?)\]/i);
-  if (m) {
-    var sizeStr = m[1];
-    var sizeBytes = parseSize(sizeStr);
-    if (sizeBytes >= 100000 && sizeBytes <= 100000000000) {
-      return sizeStr;
-    }
-  }
-  m = text.match(/(?<!\w)([0-9]+(?:\.[0-9]+)?\s*[KMGT]B)(?!\w)/i);
-  if (m) {
-    var sizeStr = m[1];
-    var sizeBytes = parseSize(sizeStr);
-    if (sizeBytes >= 100000 && sizeBytes <= 100000000000) {
-      return sizeStr;
-    }
-  }
-  return null;
+  var s = String(text || "");
+  var m = s.match(/\[([0-9.]+\s*[KMGT]B(?:\/E)?)\]/i) ||
+          s.match(/([0-9]+(?:\.[0-9]+)?\s*[KMGT]B)/i) ||
+          s.match(/\b([0-9.]+\s*GB)\b/i) ||
+          s.match(/\b([0-9.]+\s*MB)\b/i);
+  return m ? m[1] : "";
 }
 
 function extractFps(text) {
   var m = /\b(24|25|30|48|60|120)\s*fps\b/i.exec(String(text || ""));
-  return m ? m[1] + "fps" : null;
+  return m ? m[1] + "fps" : "";
 }
 
 function pickHost(url) {
@@ -162,8 +156,8 @@ function pickHost(url) {
 
   if (/pixeldrain/.test(hostname)) return "PixelDrain";
   if (/mediafire/.test(hostname)) return "MediaFire";
-  if (/mega\./.test(hostname)) return "Mega";
-  if (/google/.test(hostname) || /drive\.google/.test(hostname)) return "Google Drive";
+  if (/mega\.(nz|io)/.test(hostname)) return "Mega";
+  if (/drive\.google|googleapis/.test(hostname)) return "GoogleDrive";
   if (/1fichier/.test(hostname)) return "1Fichier";
   if (/streamtape/.test(hostname)) return "StreamTape";
   if (/dood/.test(hostname)) return "DoodStream";
@@ -175,9 +169,8 @@ function pickHost(url) {
   if (/hubcloud/.test(hostname)) return "HubCloud";
   if (/pengu/.test(hostname)) return "Pengu";
   if (/sooti/.test(hostname)) return "Sooti";
-  if (/cdn/.test(hostname)) return "CDN";
-  if (/cloudflare/.test(hostname) || /r2\.dev/.test(hostname)) return "Cloudflare";
-  if (/workers\.dev/.test(hostname)) return "Cloudflare Workers";
+  if (/r2\.dev/.test(hostname)) return "CloudflareR2";
+  if (/workers\.dev/.test(hostname)) return "CFWorkers";
   if (/aoneroom/.test(hostname)) return "MovieBox";
   if (/111477/.test(hostname)) return "111477";
   return hostname.replace(/^www\./, "") || "Direct";
@@ -203,39 +196,8 @@ function calcMbps(sizeMB, runtimeMinutes) {
   return (bits / seconds / 1000000).toFixed(1) + " Mbps";
 }
 
-function getInvertedSortTag(score, maxScore) {
-  maxScore = maxScore || 999999;
-  var val = Math.max(0, parseInt(score, 10) || 0);
-  var inv = Math.max(0, maxScore - val);
-  var bin = inv.toString(2);
-  while (bin.length < 20) bin = "0" + bin;
-  var chars = [];
-  for (var i = 0; i < bin.length; i++) {
-    chars.push(bin.charAt(i) === "1" ? "\uFEFF" : "\u200B");
-  }
-  return chars.join("");
-}
-
 // ═════════════════════════════════════════════════════════════════════════════
-// SERVER HEALTH & SPEED CHECK
-// ═════════════════════════════════════════════════════════════════════════════
-
-function isLikelyWorkingAndFast(url, host) {
-  if (!url || String(url).indexOf("http") !== 0) return false;
-  var low = String(url).toLowerCase();
-  if (low.indexOf("404") !== -1 || low.indexOf("error") !== -1 || low.indexOf("notfound") !== -1) return false;
-  
-  var lowHost = String(host || "").toLowerCase();
-  for (var i = 0; i < BLOCKED_SLOW_HOSTS.length; i++) {
-    if (lowHost.indexOf(BLOCKED_SLOW_HOSTS[i]) !== -1) {
-      return false;
-    }
-  }
-  return true;
-}
-
-// ═════════════════════════════════════════════════════════════════════════════
-// ACCURATE STREAM ENRICHMENT
+// STREAM ENRICHMENT
 // ═════════════════════════════════════════════════════════════════════════════
 
 function enrichStream(it, meta) {
@@ -248,12 +210,12 @@ function enrichStream(it, meta) {
   var line2 = rawLines[1] || "";
   var fullText = line1 + " " + line2;
 
+  /* ── Quality ── */
   var quality = extractQualityLabel(fullText + " " + name + " " + url);
-  if (!quality) return null;
-  
   var qualityUp = quality.toUpperCase();
   if (!ALLOWED_QUALITIES[qualityUp]) return null;
 
+  /* ── Size ── */
   var size = extractSize(fullText);
   if (!size) size = extractSize(name);
   if (!size) size = extractSize(url);
@@ -264,6 +226,7 @@ function enrichStream(it, meta) {
     else size = Math.round(vs / (1024 * 1024)) + " MB";
   }
 
+  /* ── Language ── */
   var langParts = [];
   if (/\b(?:english|eng)\b/.test(combined)) langParts.push("English");
   if (/\bhindi\b/.test(combined)) langParts.push("Hindi");
@@ -280,70 +243,72 @@ function enrichStream(it, meta) {
   if (/\brussian\b/.test(combined)) langParts.push("Russian");
   if (/\bdual\b/.test(combined)) langParts.push("Dual Audio");
   if (/\bmulti\b/.test(combined)) langParts.push("Multi Audio");
+  if (langParts.length === 0) langParts.push("English");
 
-  var source = null;
+  /* ── Source ── */
+  var source = "WEB-DL";
   var isRemux = false;
   if (/\bremux\b/.test(combined)) { source = "Blu-ray"; isRemux = true; }
   else if (/\bblu[-\s]?ray\b/.test(combined)) source = "Blu-ray";
-  else if (/\bweb[-\s]?dl\b/.test(combined)) source = "WEB-DL";
   else if (/\b(?:webrip|hdrip)\b/.test(combined)) source = "WEB-Rip";
   else if (/\bdvd\b/.test(combined)) source = "DVD";
   else if (/\bhdtv\b/.test(combined)) source = "HDTV";
+  else if (/\bcam\b/.test(combined)) source = "CAM";
+  else if (/\bts\b/.test(combined)) source = "TS";
 
-  var hdrTag = null;
+  /* ── HDR / DV ── */
+  var hdrTag = "";
   if (/\b(?:hdr10\+|hdr10p)\b/.test(combined)) hdrTag = "HDR10+";
   else if (/\bhdr10\b/.test(combined)) hdrTag = "HDR10";
   else if (/\bhdr\b/.test(combined)) hdrTag = "HDR";
   else if (/\bsdr\b/.test(combined)) hdrTag = "SDR";
 
-  var dvTag = /\b(?:dv|dolby\s*vision)\b/.test(combined) ? "DV" : null;
-  var bit10Tag = /\b10bit\b/.test(combined) ? "10Bit" : null;
+  var dvTag = /\b(?:dv|dolby\s*vision)\b/.test(combined) ? "DV" : "";
+  var bit10Tag = /\b10bit\b/.test(combined) ? "10Bit" : "";
 
-  var codec = null;
-  if (/\b(?:hevc|x265|265|h265)\b/.test(combined)) codec = "H.265";
-  else if (/\b(?:avc|x264|264|h264)\b/.test(combined)) codec = "H.264";
+  /* ── Codec (do not clobber AV1/VP9) ── */
+  var codec = "";
+  if (/\b(?:hevc|x265|h265)\b/.test(combined)) codec = "H.265";
   else if (/\bav1\b/.test(combined)) codec = "AV1";
   else if (/\bvp9\b/.test(combined)) codec = "VP9";
-  if ((qualityUp === "4K" || qualityUp === "2160P") && !codec) {
-    codec = "H.265";
-  }
+  else if (/\b(?:avc|x264|h264)\b/.test(combined)) codec = "H.264";
+  if (!codec) codec = (qualityUp === "4K" || qualityUp === "2160P") ? "H.265" : "H.264";
 
-  var audio = null;
+  /* ── Audio ── */
+  var audio = "";
   for (var i = 0; i < AUDIO_TABLE.length; i++) {
-    if (AUDIO_TABLE[i][0].test(combined)) { 
-      audio = AUDIO_TABLE[i][1]; 
-      break; 
-    }
+    if (AUDIO_TABLE[i][0].test(combined)) { audio = AUDIO_TABLE[i][1]; break; }
   }
-  if (audio && /\batmos\b/.test(combined)) audio += " Atmos";
+  if (!audio) audio = "AAC 5.1";
+  if (/\batmos\b/.test(combined)) audio += " Atmos";
 
+  /* ── FPS ── */
   var fps = extractFps(fullText);
-  var host = pickHost(url);
-  
-  var sizeMB = size ? (parseSize(size) / 1e6) : null;
-  var runtime = (meta && meta.runtime) ? meta.runtime : 120;
-  var mbps = sizeMB ? calcMbps(sizeMB, runtime) : null;
 
-  var mainTitleParts = ["AIOStreams", qualityUp];
-  if (size) mainTitleParts.push(size);
-  
-  var mainTitle = "";
-  for (var ti = 0; ti < mainTitleParts.length; ti++) {
-    if (mainTitleParts[ti]) {
-      if (mainTitle) mainTitle += " • ";
-      mainTitle += mainTitleParts[ti];
+  /* ── Host ── */
+  var host = pickHost(url);
+
+  /* ── Bitrate (use real runtime) ── */
+  var runtime = (meta && meta.runtime) ? meta.runtime : (meta && meta.kind === "tv" ? 45 : 120);
+  var sizeMB = parseSize(size) / (1024 * 1024);
+  var mbps = calcMbps(sizeMB, runtime);
+
+  /* ── Visible quality badge ── */
+  var badge = (qualityUp === "4K" || qualityUp === "2160P") ? "[4K]" : "[1080p]";
+
+  /* ── Headers ── */
+  var headers = { "User-Agent": UA, "Accept": "*/*" };
+  if (it.behaviorHints && it.behaviorHints.proxyHeaders && it.behaviorHints.proxyHeaders.request) {
+    var ph = it.behaviorHints.proxyHeaders.request;
+    for (var k in ph) {
+      if (Object.prototype.hasOwnProperty.call(ph, k)) headers[k] = ph[k];
     }
   }
 
-  var lineA = langParts.length > 0 ? langParts.join(" • ") : "";
+  /* ── Compose display ── */
+  var lineA = langParts.join(" • ");
 
-  var lineBParts = [];
-  if (source) lineBParts.push(source);
-  if (isRemux) lineBParts.push("REMUX");
-  lineBParts.push(host);
-  if (mbps) lineBParts.push(mbps);
-  if (fps) lineBParts.push(fps);
-  
+  var lineBParts = [source, isRemux ? "REMUX" : "", host, mbps || "", fps];
   var lineB = "";
   for (var bi = 0; bi < lineBParts.length; bi++) {
     if (lineBParts[bi]) {
@@ -352,13 +317,7 @@ function enrichStream(it, meta) {
     }
   }
 
-  var lineCParts = [];
-  if (bit10Tag) lineCParts.push(bit10Tag);
-  if (dvTag) lineCParts.push(dvTag);
-  if (hdrTag) lineCParts.push(hdrTag);
-  if (codec) lineCParts.push(codec);
-  if (audio) lineCParts.push(audio);
-  
+  var lineCParts = [bit10Tag, dvTag, hdrTag, codec, audio];
   var lineC = "";
   for (var ci = 0; ci < lineCParts.length; ci++) {
     if (lineCParts[ci]) {
@@ -367,98 +326,148 @@ function enrichStream(it, meta) {
     }
   }
 
-  var streamTitleParts = [];
-  if (lineA) streamTitleParts.push(lineA);
-  if (lineB) streamTitleParts.push(lineB);
-  if (lineC) streamTitleParts.push(lineC);
-  
-  var streamTitle = streamTitleParts.join("\n");
+  var streamTitle = lineA;
+  if (lineB) streamTitle += "\n" + lineB;
+  if (lineC) streamTitle += "\n" + lineC;
 
-  var qualityScore = qualityUp === "4K" || qualityUp === "2160P" ? 4000 : 3000;
-  var sizeScore = size ? Math.round(parseSize(size) / 1048576) : 0;
-  var totalScore = qualityScore + sizeScore;
-  var sortTag = getInvertedSortTag(totalScore, 999999);
-
-  var headers = { "User-Agent": UA, "Accept": "*/*" };
-  if (it.behaviorHints && it.behaviorHints.proxyHeaders && it.behaviorHints.proxyHeaders.request) {
-    var ph = it.behaviorHints.proxyHeaders.request;
-    for (var k in ph) {
-      if (Object.prototype.hasOwnProperty.call(ph, k)) {
-        headers[k] = ph[k];
-      }
-    }
-  }
+  /* ── Top line: badge + quality + size ── */
+  var topLine = badge + " " + qualityUp;
+  if (size) topLine += " • " + size;
 
   return {
-    name: sortTag + mainTitle,
-    title: mainTitle,
-    description: streamTitle,
+    name: topLine,
+    title: streamTitle,
     url: url,
     quality: qualityUp,
     headers: headers,
     _host: host,
     _sizeRaw: size || "",
-    _sizeBytes: size ? parseSize(size) : 0,
-    _rawTitle: rawTitle
+    _sizeVal: parseSize(size),
+    _qualityUp: qualityUp,
+    _is4K: (qualityUp === "4K" || qualityUp === "2160P")
   };
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// DEDUP: KEEP LARGEST FROM EACH HOST
+// HEALTH CHECK — real probe of each URL
 // ═════════════════════════════════════════════════════════════════════════════
 
-/**
- * NEW: Explicitly groups by host, then keeps ONLY the largest from each
- */
-function dedupByHostKeepLargest(streams) {
-  var hostMap = {};
-  
-  // Group all streams by host
-  for (var i = 0; i < streams.length; i++) {
-    var s = streams[i];
-    if (!s || !s._host) continue;
-    
-    var hostKey = s._host.toLowerCase().replace(/[^a-z0-9]/g, "");
-    
-    if (!hostMap[hostKey]) {
-      hostMap[hostKey] = [];
-    }
-    hostMap[hostKey].push(s);
-  }
-  
-  // From each host, keep ONLY the largest
-  var out = [];
-  for (var host in hostMap) {
-    if (Object.prototype.hasOwnProperty.call(hostMap, host)) {
-      var hostStreams = hostMap[host];
-      
-      // Sort by size (largest first)
-      hostStreams.sort(function(a, b) {
-        return b._sizeBytes - a._sizeBytes;
+function probeServer(url, headers) {
+  return new Promise(function (resolve) {
+    var start = Date.now();
+    var settled = false;
+
+    var opts = { method: "GET", headers: copyHeaders(headers) };
+    opts.headers["Range"] = "bytes=0-1";
+
+    var timer = setTimeout(function () {
+      if (settled) return;
+      settled = true;
+      resolve({ ok: false, ms: Date.now() - start, reason: "timeout" });
+    }, SERVER_CHECK_TIMEOUT);
+
+    fetch(url, opts)
+      .then(function (r) {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        var ms = Date.now() - start;
+        var code = r.status;
+        /* 2xx/3xx = alive; 405/416 mean server responded, treat as alive */
+        if ((code >= 200 && code < 400) || code === 405 || code === 416) {
+          resolve({ ok: true, ms: ms, status: code });
+        } else {
+          resolve({ ok: false, ms: ms, status: code });
+        }
+      })
+      .catch(function (e) {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve({ ok: false, ms: Date.now() - start, reason: e.message });
       });
-      
-      // Keep the largest one
-      out.push(hostStreams[0]);
+  });
+}
+
+function probeAll(streams) {
+  return new Promise(function (resolve) {
+    var n = streams.length;
+    if (n === 0) return resolve([]);
+
+    var results = new Array(n);
+    var remaining = n;
+    var nextIdx = 0;
+    var running = 0;
+    var finished = false;
+
+    function finish() {
+      if (finished) return;
+      finished = true;
+      resolve(results);
     }
-  }
-  
-  return out;
+
+    function launch() {
+      while (running < MAX_SERVER_CHECKS && nextIdx < n) {
+        (function (idx) {
+          running++;
+          probeServer(streams[idx].url, streams[idx].headers).then(function (res) {
+            results[idx] = res;
+            running--;
+            remaining--;
+            if (remaining === 0) finish();
+            else launch();
+          });
+        })(nextIdx);
+        nextIdx++;
+      }
+      if (running === 0 && nextIdx >= n && remaining > 0) {
+        /* safety net — should not happen */
+        finish();
+      }
+    }
+
+    launch();
+  });
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// SORT BY QUALITY AND SIZE
+// DEDUP + SORT
 // ═════════════════════════════════════════════════════════════════════════════
 
-function sortByQualityAndSize(streams) {
+/* Dedup by URL first */
+function dedupByUrl(streams) {
+  var seen = {};
+  var out = [];
+  for (var i = 0; i < streams.length; i++) {
+    var s = streams[i];
+    if (!s || !s.url || seen[s.url]) continue;
+    seen[s.url] = true;
+    out.push(s);
+  }
+  return out;
+}
+
+/* Keep ONLY ONE stream per (host + quality). Prefer the largest size. */
+function dedupByHostQuality(streams) {
+  var best = {};
+  for (var i = 0; i < streams.length; i++) {
+    var s = streams[i];
+    var key = (s._host || "?") + "|" + s._qualityUp;
+    var cur = best[key];
+    if (!cur || s._sizeVal > cur._sizeVal) best[key] = s;
+  }
+  var out = [];
+  for (var k in best) {
+    if (Object.prototype.hasOwnProperty.call(best, k)) out.push(best[k]);
+  }
+  return out;
+}
+
+/* Sort: 4K first (by size desc), then 1080p (by size desc) */
+function sortByQualityThenSize(streams) {
   return streams.slice().sort(function (a, b) {
-    var rankA = (a.quality === "4K" || a.quality === "2160P") ? 2 : 1;
-    var rankB = (b.quality === "4K" || b.quality === "2160P") ? 2 : 1;
-    
-    if (rankA !== rankB) {
-      return rankB - rankA;
-    }
-    
-    return b._sizeBytes - a._sizeBytes;
+    if (a._is4K !== b._is4K) return a._is4K ? -1 : 1;
+    return b._sizeVal - a._sizeVal;
   });
 }
 
@@ -468,6 +477,7 @@ function sortByQualityAndSize(streams) {
 
 function getStreams(tmdbId, mediaType, season, episode) {
   var out = [];
+  var seen = {};
   var isTv = (mediaType === "tv" || mediaType === "series" || mediaType === "show");
   var sea = parseInt(season, 10) || 1;
   var ep = parseInt(episode, 10) || 1;
@@ -475,20 +485,17 @@ function getStreams(tmdbId, mediaType, season, episode) {
   log("request", (isTv ? "tv" : "movie") + " tmdb=" + tmdbId + (isTv ? " S" + sea + "E" + ep : ""));
 
   if (!/^\d+$/.test(String(tmdbId))) {
-    logFailure("invalid_tmdb_id", tmdbId);
+    log("[error] invalid_tmdb_id " + tmdbId);
     return Promise.resolve([]);
   }
 
   return resolveMeta(tmdbId, mediaType)
     .then(function (meta) {
       var ids = [];
-      if (meta && meta.imdbId && meta.imdbId.indexOf("tt") === 0) {
-        ids.push(meta.imdbId);
-      }
+      if (meta && meta.imdbId && meta.imdbId.indexOf("tt") === 0) ids.push(meta.imdbId);
       ids.push("tmdb:" + tmdbId);
 
-      log("tmdb_title", meta ? meta.title : "unknown");
-      log("trying_ids", ids.join(", "));
+      log("tmdb", meta ? (meta.title + " (" + (meta.year || "?") + ")") : "unknown");
 
       function tryId(idx) {
         if (idx >= ids.length) return Promise.resolve();
@@ -497,16 +504,13 @@ function getStreams(tmdbId, mediaType, season, episode) {
           ? AIOSTREAMS_BASE + "/stream/series/" + id + ":" + sea + ":" + ep + ".json"
           : AIOSTREAMS_BASE + "/stream/movie/" + id + ".json";
 
-        log("fetching", streamUrl.substring(0, 120) + "...");
+        log("fetch", "id=" + id);
 
         return fetchT(streamUrl, {
           headers: { "User-Agent": UA, "Accept": "application/json" }
         }, 15000)
           .then(function (r) {
-            if (!r.ok) {
-              log("http_error", r.status + " for " + id);
-              return tryId(idx + 1);
-            }
+            if (!r.ok) { log("http_error", r.status + " for " + id); return tryId(idx + 1); }
             return r.json();
           })
           .then(function (data) {
@@ -515,30 +519,51 @@ function getStreams(tmdbId, mediaType, season, episode) {
               return tryId(idx + 1);
             }
 
-            log("raw_streams", data.streams.length + " from " + id);
+            log("raw", data.streams.length + " from " + id);
 
+            /* Enrich + filter 4K/1080p */
             var enriched = [];
             for (var i = 0; i < data.streams.length; i++) {
               var it = data.streams[i];
               var url = it && it.url;
-              if (!url || String(url).indexOf("http") !== 0) continue;
+              if (!url || String(url).indexOf("http") !== 0 || seen[url]) continue;
 
               var stream = enrichStream(it, meta);
               if (!stream) continue;
 
-              if (isLikelyWorkingAndFast(stream.url, stream._host)) {
-                enriched.push(stream);
+              seen[url] = true;
+              enriched.push(stream);
+            }
+
+            log("enriched", enriched.length + " after quality filter");
+
+            if (enriched.length === 0) return tryId(idx + 1);
+
+            /* Dedup by URL + host+quality */
+            var d1 = dedupByUrl(enriched);
+            var d2 = dedupByHostQuality(d1);
+            log("dedup", d2.length + " after host+quality dedup");
+
+            if (d2.length === 0) return tryId(idx + 1);
+
+            /* Probe every candidate — keep only WORKING + FAST */
+            log("probing", d2.length + " servers...");
+            return probeAll(d2).then(function (results) {
+              var alive = [];
+              for (var r = 0; r < d2.length; r++) {
+                var res = results[r];
+                if (!res || !res.ok) continue;
+                if (res.ms > FAST_THRESHOLD_MS) continue;
+                var s = d2[r];
+                s._probeMs = res.ms;
+                alive.push(s);
               }
-            }
+              log("alive_fast", alive.length + " of " + d2.length);
 
-            log("enriched_fast_4k_1080p", enriched.length + " streams after quality & speed filter");
+              if (alive.length === 0) return tryId(idx + 1);
 
-            if (enriched.length === 0) {
-              return tryId(idx + 1);
-            }
-
-            out = out.concat(enriched);
-            return Promise.resolve();
+              out = out.concat(alive);
+            });
           })
           .catch(function (e) {
             log("error", id + ": " + e.message);
@@ -549,17 +574,14 @@ function getStreams(tmdbId, mediaType, season, episode) {
       return tryId(0);
     })
     .then(function () {
-      // ── DEDUP FIRST: Keep largest from each host ──
-      var deduped = dedupByHostKeepLargest(out);
-      
-      // ── THEN SORT: 4K (largest first), then 1080p (largest first) ──
-      var sorted = sortByQualityAndSize(deduped);
-      
-      log("final_streams", sorted.length + " unique hosts (largest from each, sorted by quality & size)");
+      var d1 = dedupByUrl(out);
+      var d2 = dedupByHostQuality(d1);
+      var sorted = sortByQualityThenSize(d2);
+      log("final", sorted.length + " streams (4K desc size, then 1080p desc size)");
       return sorted;
     })
     .catch(function (e) {
-      logFailure("fatal", e.message);
+      log("fatal", e.message);
       return [];
     });
 }
