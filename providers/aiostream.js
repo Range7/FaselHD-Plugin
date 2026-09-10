@@ -1,11 +1,13 @@
 /**
- * AIOStreams Provider for Nuvio — 4K/1080p ONLY + Rich Metadata
- * Version: 1.1.0
+ * AIOStreams Provider for Nuvio — 4K/1080p ONLY + Accurate Metadata
+ * Version: 1.4.0 (Guaranteed Largest from Each Host)
  *
- * Sources streams from AIOStreams (aiostreamso-youness.ufcfan.org)
- * Filters: 4K + 1080p ONLY, working servers only
- * Display: Rich metadata (quality, size, language, source, codec, audio, host, bitrate)
- * Hermes-safe: no async/await, no const/let, no arrow functions, no URL constructor
+ * Sources streams from AIOStreams
+ * Filters: 4K + 1080p ONLY, Fast servers only
+ * Dedup: From each host, keeps ONLY the largest size
+ * Sorting: 4K (Largest -> Smallest), then 1080p (Largest -> Smallest)
+ * Accuracy: Only shows verified information, no assumptions
+ * Hermes-safe: no async/await, no const/let, no arrow functions
  */
 
 "use strict";
@@ -14,21 +16,20 @@
 // CONFIGURATION
 // ═════════════════════════════════════════════════════════════════════════════
 
-var VERSION = "1.1.0";
+var VERSION = "1.4.0";
 var UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 var TMDB_API_KEY = "b3556f3b206e16f82df4d1f6fd4545e6";
 var TMDB_DIRECT = "https://api.themoviedb.org/3";
 var TMDB_PROXY = "https://db.speedracelight.com/3";
 
-/** AIOStreams endpoint — encrypted config embedded in URL */
 var AIOSTREAMS_BASE = "https://aiostreamso-youness.ufcfan.org/stremio/c084b129-0660-465c-9496-5617c07a5898/eyJpIjoiWGM5RldyY0xsQlkwZ3EzeG00dEVvUT09IiwiZSI6IkZjeGQ4ck5qWURqUzVTL3VBZGFLQ1hJWEtZSEc4Mm9qUWM0THVlMnVoSlE9IiwidCI6ImEifQ";
 
-/** Allowed qualities */
 var ALLOWED_QUALITIES = { "4K": true, "2160P": true, "2160p": true, "1080P": true, "1080p": true };
 
-/** Max concurrent server checks */
-var MAX_SERVER_CHECKS = 20;
-var SERVER_CHECK_TIMEOUT = 8000;
+var BLOCKED_SLOW_HOSTS = [
+  "doodstream", "dood", "mixdrop", "streamtape", "vidoza", 
+  "upstream", "voe", "fastdl", "sooti", "pengu"
+];
 
 var _metaCache = {};
 var _tmdbPool = [TMDB_DIRECT, TMDB_PROXY];
@@ -83,7 +84,13 @@ function resolveMeta(tmdbId, mediaType) {
         var dateStr = kind === "tv" ? j.first_air_date : j.release_date;
         var year = dateStr ? parseInt(String(dateStr).slice(0, 4), 10) : null;
         var imdbId = (j.external_ids && j.external_ids.imdb_id) || j.imdb_id || null;
-        var meta = { title: title, year: year, imdbId: imdbId, kind: kind };
+        var meta = { 
+          title: title, 
+          year: year, 
+          imdbId: imdbId, 
+          kind: kind, 
+          runtime: j.runtime || (kind === "tv" ? 45 : 120) 
+        };
         _metaCache[ck] = meta;
         return meta;
       })
@@ -94,7 +101,7 @@ function resolveMeta(tmdbId, mediaType) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// QUALITY & METADATA EXTRACTION (a111477 style)
+// ACCURATE METADATA EXTRACTION
 // ═════════════════════════════════════════════════════════════════════════════
 
 var AUDIO_TABLE = [
@@ -112,29 +119,39 @@ var AUDIO_TABLE = [
   [/mp3/i, "MP3"],
 ];
 
-var QUALITY_RANK = { "4K": 5, "2160P": 5, "1080P": 4, "720P": 3, "480P": 2, "CAM": 1 };
-
 function extractQualityLabel(text) {
   var t = String(text || "").toUpperCase();
-  if (/2160|\b4K\b|UHD/.test(t)) return "4K";
-  if (/1080/.test(t)) return "1080P";
-  if (/720/.test(t)) return "720P";
-  if (/480/.test(t)) return "480P";
-  if (/\bCAM\b/.test(t)) return "CAM";
-  return "";
+  if (/\b(2160P|4K|UHD)\b/.test(t)) return "4K";
+  if (/\b1080P\b/.test(t)) return "1080P";
+  if (/\b720P\b/.test(t)) return "720P";
+  if (/\b480P\b/.test(t)) return "480P";
+  return null;
 }
 
 function extractSize(text) {
-  var m = String(text || "").match(/\[([0-9.]+\s*[KMGT]B(?:\/E)?)\]/i) ||
-          String(text || "").match(/([0-9]+(?:\.[0-9]+)?\s*[KMGT]B)/i) ||
-          String(text || "").match(/\b([0-9.]+\s*GB)\b/i) ||
-          String(text || "").match(/\b([0-9.]+\s*MB)\b/i);
-  return m ? m[1] : "";
+  text = String(text || "");
+  var m = text.match(/\[([0-9.]+\s*[KMGT]B(?:\/E)?)\]/i);
+  if (m) {
+    var sizeStr = m[1];
+    var sizeBytes = parseSize(sizeStr);
+    if (sizeBytes >= 100000 && sizeBytes <= 100000000000) {
+      return sizeStr;
+    }
+  }
+  m = text.match(/(?<!\w)([0-9]+(?:\.[0-9]+)?\s*[KMGT]B)(?!\w)/i);
+  if (m) {
+    var sizeStr = m[1];
+    var sizeBytes = parseSize(sizeStr);
+    if (sizeBytes >= 100000 && sizeBytes <= 100000000000) {
+      return sizeStr;
+    }
+  }
+  return null;
 }
 
 function extractFps(text) {
   var m = /\b(24|25|30|48|60|120)\s*fps\b/i.exec(String(text || ""));
-  return m ? m[1] + "fps" : "";
+  return m ? m[1] + "fps" : null;
 }
 
 function pickHost(url) {
@@ -166,18 +183,6 @@ function pickHost(url) {
   return hostname.replace(/^www\./, "") || "Direct";
 }
 
-function parseSizeMB(sizeStr) {
-  if (!sizeStr) return null;
-  var m = /([0-9]+(?:\.[0-9]+)?)\s*(GB|MB|TB)/i.exec(sizeStr);
-  if (!m) return null;
-  var val = parseFloat(m[1]);
-  var unit = m[2].toUpperCase();
-  if (unit === "TB") return val * 1024 * 1024;
-  if (unit === "GB") return val * 1024;
-  if (unit === "MB") return val;
-  return val;
-}
-
 function parseSize(str) {
   if (!str) return 0;
   var m = String(str).match(/([0-9.]+)\s*([KMGT]B)/i);
@@ -198,10 +203,6 @@ function calcMbps(sizeMB, runtimeMinutes) {
   return (bits / seconds / 1000000).toFixed(1) + " Mbps";
 }
 
-function guessRuntime(qualityUp) {
-  return 120;
-}
-
 function getInvertedSortTag(score, maxScore) {
   maxScore = maxScore || 999999;
   var val = Math.max(0, parseInt(score, 10) || 0);
@@ -216,26 +217,25 @@ function getInvertedSortTag(score, maxScore) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// SERVER HEALTH CHECK
+// SERVER HEALTH & SPEED CHECK
 // ═════════════════════════════════════════════════════════════════════════════
 
-/**
- * v1.1.0: Removed server health check — it caused hangs in Nuvio/Hermes.
- * Instead we filter by URL pattern to exclude known dead/broken hosts.
- * AIOStreams already pre-verifies its sources.
- */
-function isLikelyWorking(url) {
+function isLikelyWorkingAndFast(url, host) {
   if (!url || String(url).indexOf("http") !== 0) return false;
   var low = String(url).toLowerCase();
-  /* Exclude obviously broken patterns */
-  if (low.indexOf("404") !== -1) return false;
-  if (low.indexOf("error") !== -1) return false;
-  if (low.indexOf("notfound") !== -1) return false;
+  if (low.indexOf("404") !== -1 || low.indexOf("error") !== -1 || low.indexOf("notfound") !== -1) return false;
+  
+  var lowHost = String(host || "").toLowerCase();
+  for (var i = 0; i < BLOCKED_SLOW_HOSTS.length; i++) {
+    if (lowHost.indexOf(BLOCKED_SLOW_HOSTS[i]) !== -1) {
+      return false;
+    }
+  }
   return true;
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// STREAM ENRICHMENT (Rich Metadata — a111477 style)
+// ACCURATE STREAM ENRICHMENT
 // ═════════════════════════════════════════════════════════════════════════════
 
 function enrichStream(it, meta) {
@@ -248,18 +248,15 @@ function enrichStream(it, meta) {
   var line2 = rawLines[1] || "";
   var fullText = line1 + " " + line2;
 
-  /* ── Quality ── */
   var quality = extractQualityLabel(fullText + " " + name + " " + url);
+  if (!quality) return null;
+  
   var qualityUp = quality.toUpperCase();
-
-  /* ── Filter: 4K / 1080p ONLY ── */
   if (!ALLOWED_QUALITIES[qualityUp]) return null;
 
-  /* ── Size ── */
   var size = extractSize(fullText);
   if (!size) size = extractSize(name);
   if (!size) size = extractSize(url);
-  /* Also try behaviorHints videoSize */
   if (!size && it.behaviorHints && it.behaviorHints.videoSize) {
     var vs = it.behaviorHints.videoSize;
     var gb = vs / (1024 * 1024 * 1024);
@@ -267,7 +264,6 @@ function enrichStream(it, meta) {
     else size = Math.round(vs / (1024 * 1024)) + " MB";
   }
 
-  /* ── Language ── */
   var langParts = [];
   if (/\b(?:english|eng)\b/.test(combined)) langParts.push("English");
   if (/\bhindi\b/.test(combined)) langParts.push("Hindi");
@@ -284,56 +280,53 @@ function enrichStream(it, meta) {
   if (/\brussian\b/.test(combined)) langParts.push("Russian");
   if (/\bdual\b/.test(combined)) langParts.push("Dual Audio");
   if (/\bmulti\b/.test(combined)) langParts.push("Multi Audio");
-  if (langParts.length === 0) langParts.push("English");
 
-  /* ── Source ── */
-  var source = "WEB-DL";
+  var source = null;
   var isRemux = false;
   if (/\bremux\b/.test(combined)) { source = "Blu-ray"; isRemux = true; }
   else if (/\bblu[-\s]?ray\b/.test(combined)) source = "Blu-ray";
+  else if (/\bweb[-\s]?dl\b/.test(combined)) source = "WEB-DL";
   else if (/\b(?:webrip|hdrip)\b/.test(combined)) source = "WEB-Rip";
   else if (/\bdvd\b/.test(combined)) source = "DVD";
   else if (/\bhdtv\b/.test(combined)) source = "HDTV";
-  else if (/\bcam\b/.test(combined)) source = "CAM";
-  else if (/\bts\b/.test(combined)) source = "TS";
 
-  /* ── HDR / DV ── */
-  var hdrTag = "";
+  var hdrTag = null;
   if (/\b(?:hdr10\+|hdr10p)\b/.test(combined)) hdrTag = "HDR10+";
   else if (/\bhdr10\b/.test(combined)) hdrTag = "HDR10";
   else if (/\bhdr\b/.test(combined)) hdrTag = "HDR";
   else if (/\bsdr\b/.test(combined)) hdrTag = "SDR";
 
-  var dvTag = /\b(?:dv|dolby\s*vision)\b/.test(combined) ? "DV" : "";
-  var bit10Tag = /\b10bit\b/.test(combined) ? "10Bit" : "";
+  var dvTag = /\b(?:dv|dolby\s*vision)\b/.test(combined) ? "DV" : null;
+  var bit10Tag = /\b10bit\b/.test(combined) ? "10Bit" : null;
 
-  /* ── Codec ── */
-  var codec = "H.264";
+  var codec = null;
   if (/\b(?:hevc|x265|265|h265)\b/.test(combined)) codec = "H.265";
+  else if (/\b(?:avc|x264|264|h264)\b/.test(combined)) codec = "H.264";
   else if (/\bav1\b/.test(combined)) codec = "AV1";
   else if (/\bvp9\b/.test(combined)) codec = "VP9";
-  if (qualityUp === "4K" || qualityUp === "2160P") codec = "H.265";
-
-  /* ── Audio ── */
-  var audio = "AAC 5.1";
-  for (var i = 0; i < AUDIO_TABLE.length; i++) {
-    if (AUDIO_TABLE[i][0].test(combined)) { audio = AUDIO_TABLE[i][1]; break; }
+  if ((qualityUp === "4K" || qualityUp === "2160P") && !codec) {
+    codec = "H.265";
   }
-  if (/\batmos\b/.test(combined)) audio += " Atmos";
 
-  /* ── FPS ── */
+  var audio = null;
+  for (var i = 0; i < AUDIO_TABLE.length; i++) {
+    if (AUDIO_TABLE[i][0].test(combined)) { 
+      audio = AUDIO_TABLE[i][1]; 
+      break; 
+    }
+  }
+  if (audio && /\batmos\b/.test(combined)) audio += " Atmos";
+
   var fps = extractFps(fullText);
-
-  /* ── Host ── */
   var host = pickHost(url);
+  
+  var sizeMB = size ? (parseSize(size) / 1e6) : null;
+  var runtime = (meta && meta.runtime) ? meta.runtime : 120;
+  var mbps = sizeMB ? calcMbps(sizeMB, runtime) : null;
 
-  /* ── Bitrate ── */
-  var sizeMB = parseSizeMB(size);
-  var runtime = guessRuntime(qualityUp);
-  var mbps = calcMbps(sizeMB, runtime);
-
-  /* ── Build Display Title ── */
-  var mainTitleParts = ["AIOStreams", qualityUp, size];
+  var mainTitleParts = ["AIOStreams", qualityUp];
+  if (size) mainTitleParts.push(size);
+  
   var mainTitle = "";
   for (var ti = 0; ti < mainTitleParts.length; ti++) {
     if (mainTitleParts[ti]) {
@@ -342,10 +335,15 @@ function enrichStream(it, meta) {
     }
   }
 
-  /* ── Build Info Lines ── */
-  var lineA = langParts.join(" • ");
+  var lineA = langParts.length > 0 ? langParts.join(" • ") : "";
 
-  var lineBParts = [source, isRemux ? "REMUX" : "", host, mbps || "", fps];
+  var lineBParts = [];
+  if (source) lineBParts.push(source);
+  if (isRemux) lineBParts.push("REMUX");
+  lineBParts.push(host);
+  if (mbps) lineBParts.push(mbps);
+  if (fps) lineBParts.push(fps);
+  
   var lineB = "";
   for (var bi = 0; bi < lineBParts.length; bi++) {
     if (lineBParts[bi]) {
@@ -354,7 +352,13 @@ function enrichStream(it, meta) {
     }
   }
 
-  var lineCParts = [bit10Tag, dvTag, hdrTag, codec, audio];
+  var lineCParts = [];
+  if (bit10Tag) lineCParts.push(bit10Tag);
+  if (dvTag) lineCParts.push(dvTag);
+  if (hdrTag) lineCParts.push(hdrTag);
+  if (codec) lineCParts.push(codec);
+  if (audio) lineCParts.push(audio);
+  
   var lineC = "";
   for (var ci = 0; ci < lineCParts.length; ci++) {
     if (lineCParts[ci]) {
@@ -363,26 +367,19 @@ function enrichStream(it, meta) {
     }
   }
 
-  var streamTitleParts = [lineA, lineB, lineC];
-  var streamTitle = "";
-  for (var si = 0; si < streamTitleParts.length; si++) {
-    if (streamTitleParts[si]) {
-      if (streamTitle) streamTitle += "\n";
-      streamTitle += streamTitleParts[si];
-    }
-  }
+  var streamTitleParts = [];
+  if (lineA) streamTitleParts.push(lineA);
+  if (lineB) streamTitleParts.push(lineB);
+  if (lineC) streamTitleParts.push(lineC);
+  
+  var streamTitle = streamTitleParts.join("\n");
 
-  /* ── Sort Tag ── */
   var qualityScore = qualityUp === "4K" || qualityUp === "2160P" ? 4000 : 3000;
-  var sizeScore = Math.round(parseSize(size) / 1048576);
+  var sizeScore = size ? Math.round(parseSize(size) / 1048576) : 0;
   var totalScore = qualityScore + sizeScore;
   var sortTag = getInvertedSortTag(totalScore, 999999);
 
-  /* ── Headers ── */
-  var headers = {
-    "User-Agent": UA,
-    "Accept": "*/*"
-  };
+  var headers = { "User-Agent": UA, "Accept": "*/*" };
   if (it.behaviorHints && it.behaviorHints.proxyHeaders && it.behaviorHints.proxyHeaders.request) {
     var ph = it.behaviorHints.proxyHeaders.request;
     for (var k in ph) {
@@ -395,36 +392,73 @@ function enrichStream(it, meta) {
   return {
     name: sortTag + mainTitle,
     title: mainTitle,
-    size: streamTitle,
+    description: streamTitle,
     url: url,
     quality: qualityUp,
     headers: headers,
     _host: host,
     _sizeRaw: size || "",
-    _qualityUp: qualityUp,
+    _sizeBytes: size ? parseSize(size) : 0,
     _rawTitle: rawTitle
   };
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// SORT & DEDUP
+// DEDUP: KEEP LARGEST FROM EACH HOST
 // ═════════════════════════════════════════════════════════════════════════════
 
-function dedupByUrl(streams) {
-  var seen = {};
-  var out = [];
+/**
+ * NEW: Explicitly groups by host, then keeps ONLY the largest from each
+ */
+function dedupByHostKeepLargest(streams) {
+  var hostMap = {};
+  
+  // Group all streams by host
   for (var i = 0; i < streams.length; i++) {
     var s = streams[i];
-    if (!s || !s.url || seen[s.url]) continue;
-    seen[s.url] = true;
-    out.push(s);
+    if (!s || !s._host) continue;
+    
+    var hostKey = s._host.toLowerCase().replace(/[^a-z0-9]/g, "");
+    
+    if (!hostMap[hostKey]) {
+      hostMap[hostKey] = [];
+    }
+    hostMap[hostKey].push(s);
   }
+  
+  // From each host, keep ONLY the largest
+  var out = [];
+  for (var host in hostMap) {
+    if (Object.prototype.hasOwnProperty.call(hostMap, host)) {
+      var hostStreams = hostMap[host];
+      
+      // Sort by size (largest first)
+      hostStreams.sort(function(a, b) {
+        return b._sizeBytes - a._sizeBytes;
+      });
+      
+      // Keep the largest one
+      out.push(hostStreams[0]);
+    }
+  }
+  
   return out;
 }
 
-function sortByQuality(streams) {
+// ═════════════════════════════════════════════════════════════════════════════
+// SORT BY QUALITY AND SIZE
+// ═════════════════════════════════════════════════════════════════════════════
+
+function sortByQualityAndSize(streams) {
   return streams.slice().sort(function (a, b) {
-    return (QUALITY_RANK[b.quality] || 0) - (QUALITY_RANK[a.quality] || 0);
+    var rankA = (a.quality === "4K" || a.quality === "2160P") ? 2 : 1;
+    var rankB = (b.quality === "4K" || b.quality === "2160P") ? 2 : 1;
+    
+    if (rankA !== rankB) {
+      return rankB - rankA;
+    }
+    
+    return b._sizeBytes - a._sizeBytes;
   });
 }
 
@@ -434,7 +468,6 @@ function sortByQuality(streams) {
 
 function getStreams(tmdbId, mediaType, season, episode) {
   var out = [];
-  var seen = {};
   var isTv = (mediaType === "tv" || mediaType === "series" || mediaType === "show");
   var sea = parseInt(season, 10) || 1;
   var ep = parseInt(episode, 10) || 1;
@@ -455,7 +488,6 @@ function getStreams(tmdbId, mediaType, season, episode) {
       ids.push("tmdb:" + tmdbId);
 
       log("tmdb_title", meta ? meta.title : "unknown");
-      log("tmdb_imdb", meta && meta.imdbId ? meta.imdbId : "none");
       log("trying_ids", ids.join(", "));
 
       function tryId(idx) {
@@ -485,36 +517,27 @@ function getStreams(tmdbId, mediaType, season, episode) {
 
             log("raw_streams", data.streams.length + " from " + id);
 
-            /* ── Enrich & Filter: 4K/1080p ONLY ── */
             var enriched = [];
             for (var i = 0; i < data.streams.length; i++) {
               var it = data.streams[i];
               var url = it && it.url;
-              if (!url || String(url).indexOf("http") !== 0 || seen[url]) continue;
+              if (!url || String(url).indexOf("http") !== 0) continue;
 
               var stream = enrichStream(it, meta);
-              if (!stream) continue;  /* Filtered out (not 4K/1080p) */
+              if (!stream) continue;
 
-              seen[url] = true;
-              enriched.push(stream);
+              if (isLikelyWorkingAndFast(stream.url, stream._host)) {
+                enriched.push(stream);
+              }
             }
 
-            log("enriched_4k_1080p", enriched.length + " streams after quality filter");
+            log("enriched_fast_4k_1080p", enriched.length + " streams after quality & speed filter");
 
             if (enriched.length === 0) {
               return tryId(idx + 1);
             }
 
-            /* ── Filter obviously broken URLs (v1.1.0: no health check) ── */
-            var working = [];
-            for (var w = 0; w < enriched.length; w++) {
-              if (isLikelyWorking(enriched[w].url)) {
-                working.push(enriched[w]);
-              }
-            }
-
-            log("working_servers", working.length + " of " + enriched.length);
-            out = out.concat(working);
+            out = out.concat(enriched);
             return Promise.resolve();
           })
           .catch(function (e) {
@@ -526,9 +549,13 @@ function getStreams(tmdbId, mediaType, season, episode) {
       return tryId(0);
     })
     .then(function () {
-      var deduped = dedupByUrl(out);
-      var sorted = sortByQuality(deduped);
-      log("final_streams", sorted.length + " streams (4K/1080p, verified)");
+      // ── DEDUP FIRST: Keep largest from each host ──
+      var deduped = dedupByHostKeepLargest(out);
+      
+      // ── THEN SORT: 4K (largest first), then 1080p (largest first) ──
+      var sorted = sortByQualityAndSize(deduped);
+      
+      log("final_streams", sorted.length + " unique hosts (largest from each, sorted by quality & size)");
       return sorted;
     })
     .catch(function (e) {
