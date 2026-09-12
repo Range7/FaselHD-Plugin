@@ -68,13 +68,13 @@
       "contentLanguage": ["ar", "en", "ko", "zh", "ja"]
     },
     {
-      "id": "aiostream",
-      "name": "aiostream",
-      "description": "aiostream — STRICT 4K & 1080p ONLY. Rich metadata (Size, Codec, Audio, Host) with largest file priority",
+      "id": "movy",
+      "name": "movy",
+      "description": "movy — STRICT 4K & 1080p ONLY. Rich metadata (Size, Codec, Audio, Host) with largest file priority",
       "version": "1.3.2",
       "author": "He",
       "supportedTypes": ["movie", "tv"],
-      "filename": "providers/aiostream.js",
+      "filename": "providers/movy.js",
       "enabled": true,
       "formats": ["mp4", "mkv"],
       "logo": "https://www.google.com/s2/favicons?domain=pengu.uk&sz=128",
