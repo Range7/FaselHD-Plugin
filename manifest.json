@@ -68,17 +68,17 @@
       "contentLanguage": ["ar", "en", "ko", "zh", "ja"]
     },
     {
-      "id": "movy",
-      "name": "movy",
-      "description": "movy — STRICT 4K & 1080p ONLY. Rich metadata (Size, Codec, Audio, Host) with largest file priority",
-      "version": "1.3.2",
+      "id": "vidfast",
+      "name": "VidFast",
+      "description": "VidFast - vidfast.vc embed resolver - STRICT 4K & 1080p ONLY with rich server info",
+      "version": "1.0.0",
       "author": "He",
       "supportedTypes": ["movie", "tv"],
-      "filename": "providers/movy.js",
+      "filename": "providers/vidfast.js",
       "enabled": true,
-      "formats": ["mp4", "mkv"],
-      "logo": "https://www.google.com/s2/favicons?domain=pengu.uk&sz=128",
-      "contentLanguage": ["en", "ar"]
+      "formats": ["m3u8", "mp4"],
+      "logo": "https://vidfast.vc/favicon.ico",
+      "contentLanguage": ["ar", "en"]
     },
     {
       "id": "nuvio-cee",
