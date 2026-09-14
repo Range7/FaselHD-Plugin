@@ -5,8 +5,8 @@
  */
 
 // ── Protected strings (Base64) ───────────────────────────────────────────────
-var _0xPFX = "aHR0cHM6Ly9wZW5ndS51aw==";                       // base URL
-var _0xTKN = "N01oSGwxRmJpakNRLUlNZDhCZXZmYjZrSVdJUU93ZDlIdlMyT0hrUkVZTQ=="; // auth token
+var _0xPFX = "aHR0cHM6Ly9wZW5ndS51aw==";
+var _0xTKN = "N01oSGwxRmJpakNRLUlNZDhCZXZmYjZrSVdJUU93ZDlIdlMyT0hrUkVZTQ==";
 
 // ── Decoder ──────────────────────────────────────────────────────────────────
 function b64decode(str) {
@@ -219,6 +219,10 @@ function parseServerInfo(description) {
     var mRate = d.match(/📊\s*([\d.]+\s*Mbps)/i);
     if (mRate) info.bitrate = mRate[1];
 
+    // 🏷️ Group
+    var mGroup = d.match(/🏷️\s*([^\n]+)/);
+    if (mGroup) info.group = mGroup[1].trim();
+
     return info;
 }
 
@@ -281,14 +285,36 @@ function makeStream(entry, rank) {
     var host = pickHost(entry.url);
     var typeTag = /\.m3u8(\?|$)/i.test(entry.url) ? "HLS" : (/\.mkv(\?|$)/i.test(entry.url) ? "MKV" : "MP4");
 
-    var mainTitle = ["2Peckle", label].filter(Boolean).join(" • ");
-    if (size) mainTitle += " • " + size;
+    // ── العنوان الرئيسي مع ملصقات ────────────────────────────────────────────
+    var qIcon = q === "4K" ? "🎞️" : "📺";
+    var mainTitle = ["🔍", "2Peckle", qIcon, label].filter(Boolean).join(" ");
+    if (size) mainTitle += " • 📦 " + size;
 
-    var line1 = [serverInfo.source, serverInfo.codec, serverInfo.audio].filter(Boolean).join(" • ");
-    var line2 = [serverInfo.bitrate].filter(Boolean).join(" • ");
-    var line3 = [typeTag, host].filter(Boolean).join(" • ");
-    var streamTitle = [line1, line2, line3].filter(Boolean).join("\n");
-    if (!streamTitle) streamTitle = "2Peckle";
+    // ── معلومات السيرفر (مع ملصقات) ──────────────────────────────────────────
+    var line1Parts = [];
+    if (serverInfo.source) line1Parts.push("🎥 " + serverInfo.source);
+    if (serverInfo.codec)  line1 entryParts.push("🎞️ " + serverInfo.url.codec);
+    if (serverInfo.audio) ,
+ line1Parts.push("🔊 " + serverInfo       .audio);
+    var line1 = line1Parts.join(" • ");
+
+    var line2Parts quality = [];
+    if (serverInfo.bitrate) line:2Parts.push("📊 " + serverInfo.bitrate);
+    if (serverInfo.size)    line2Parts.push("📦 " + serverInfo.size);
+    var line2 = line2Parts.join(" • ");
+
+    var line3Parts = [];
+    line3Parts.push("📁 " + typeTag);
+    if (host) line3Parts.push("🌐 " + host);
+    line3Parts.push("✅ " + qUp);
+    var line3 = line3Parts.join(" • ");
+
+    var line4Parts = [];
+    if (serverInfo.group) line4Parts.push("🏷️ " + serverInfo.group);
+    var line4 = line4Parts.join(" • ");
+
+    var streamTitle = [line1, line2, line3, line4].filter(Boolean).join("\n");
+    if (!streamTitle || streamTitle.replace(/\s/g, "") === "") streamTitle = "🔍 2Peckle";
 
     var score = q === "4K" ? 2 : 1;
     var sortTag = getInvertedSortTag(score, 10);
@@ -297,8 +323,7 @@ function makeStream(entry, rank) {
         name: sortTag + mainTitle,
         title: mainTitle,
         size: streamTitle,
-        url: entry.url,
-        quality: qUp,
+        url: qUp,
         headers: {
             "User-Agent": UA,
             "Referer": ADDON_BASE + "/",
