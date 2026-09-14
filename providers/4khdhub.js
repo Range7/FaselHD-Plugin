@@ -1,7 +1,9 @@
 /**
  * 4KHDHub Nuvio Provider
- * - Shows ALL 4K servers (largest first) — NO removal
- * - Shows 1080p servers (largest first) — removes smallest ONLY if more than one
+ * - Sort: 4K first (largest→smallest), then 1080p (largest→smallest)
+ * - Size displayed: REAL size
+ * - ALL 4K servers kept (no removal)
+ * - 1080p removes smallest ONLY if more than one
  * - PixelDrain kept only if no alternative exists
  */
 
@@ -393,7 +395,6 @@ function processPostPage(html, postUrl, type, season, episode, showTitle, runtim
 
         console.log("[4khdhub] total streams before filter: " + out.length);
 
-        // ── فلترة الجودة: 4K و 1080p فقط ─────────────────────────────────
         var qualityFiltered = [];
         for (var k = 0; k < out.length; k++) {
             var st = out[k];
@@ -407,7 +408,6 @@ function processPostPage(html, postUrl, type, season, episode, showTitle, runtim
 
         console.log("[4khdhub] after quality filter: " + qualityFiltered.length);
 
-        // ── فحص: هل يوجد سيرفر غير PixelDrain؟ ──────────────────────────
         var hasNonPixeldrain = false;
         for (var n = 0; n < qualityFiltered.length; n++) {
             var hostLow = String(qualityFiltered[n]._host || "").toLowerCase();
@@ -419,7 +419,6 @@ function processPostPage(html, postUrl, type, season, episode, showTitle, runtim
             }
         }
 
-        // ── إذا يوجد سيرفر بديل → احذف PixelDrain ────────────────────────
         var filtered = [];
         for (var m = 0; m < qualityFiltered.length; m++) {
             var stx = qualityFiltered[m];
@@ -436,21 +435,6 @@ function processPostPage(html, postUrl, type, season, episode, showTitle, runtim
 
         console.log("[4khdhub] after PixelDrain logic: " + filtered.length);
 
-        // ── ترتيب: 4K أولاً ثم 1080p، وكل جودة من الأكبر للأصغر ───────────
-        filtered.sort(function(a, b) {
-            var qa = String(a.quality || "").toUpperCase();
-            var qb = String(b.quality || "").toUpperCase();
-            var aIs4K = (qa === "4K" || qa === "2160P");
-            var bIs4K = (qb === "4K" || qb === "2160P");
-            
-            if (aIs4K && !bIs4K) return -1;
-            if (!aIs4K && bIs4K) return 1;
-            
-            return parseSize(b._sizeRaw) - parseSize(a._sizeRaw);
-        });
-
-        // ── احذف الأصغر من 1080p فقط (إذا كان فيه أكثر من واحد) ──────────
-        // ملاحظة: لا نطبق هذا على 4K أبداً
         var count1080 = 0;
         for (var p = 0; p < filtered.length; p++) {
             var qp = String(filtered[p].quality || "").toUpperCase();
@@ -460,13 +444,21 @@ function processPostPage(html, postUrl, type, season, episode, showTitle, runtim
         var removeIndexes = [];
         
         if (count1080 > 1) {
-            for (var b = filtered.length - 1; b >= 0; b--) {
-                var qb2 = String(filtered[b].quality || "").toUpperCase();
-                if (qb2 === "1080P") {
-                    removeIndexes.push(b);
-                    console.log("[4khdhub] removing smallest 1080p: " + filtered[b]._sizeRaw + " " + filtered[b]._host);
-                    break;
+            var smallest1080Idx = -1;
+            var smallestSize = Infinity;
+            for (var b = 0; b < filtered.length; b++) {
+                var qb = String(filtered[b].quality || "").toUpperCase();
+                if (qb === "1080P") {
+                    var sz = parseSize(filtered[b]._sizeRaw);
+                    if (sz < smallestSize) {
+                        smallestSize = sz;
+                        smallest1080Idx = b;
+                    }
                 }
+            }
+            if (smallest1080Idx !== -1) {
+                removeIndexes.push(smallest1080Idx);
+                console.log("[4khdhub] removing smallest 1080p: " + filtered[smallest1080Idx]._sizeRaw + " " + filtered[smallest1080Idx]._host);
             }
         } else {
             console.log("[4khdhub] only " + count1080 + " 1080p stream(s) — keeping all");
@@ -919,8 +911,14 @@ function makeStream(item, cdnUrl, isTv, showTitle, season, episode, settings, ru
     var line3 = [bit10Tag, dvTag, hdrTag, codec, audio].filter(Boolean).join(" • ");
     var streamTitle = [line1, line2, line3].filter(Boolean).join("\n");
 
+    // ═════════════════════════════════════════════════════════════════════════
+    // الترتيب: 4K أولاً (ثم 1080p)، وداخل كل جودة: الأكبر حجماً أولاً
+    // الحجم المعروض هو الحجم الحقيقي (size) — البونص فقط للترتيب الداخلي
+    // ═════════════════════════════════════════════════════════════════════════
     var sizeInMB = Math.round(parseSize(size) / 1048576);
-    var sortTag = getInvertedSortTag(sizeInMB, 999999);
+    var is4K = (qualityUp === "4K" || qualityUp === "2160P");
+    var sortScore = sizeInMB + (is4K ? 99999999 : 0);
+    var sortTag = getInvertedSortTag(sortScore, 999999999);
 
     return {
         name: sortTag + mainTitle,
@@ -1107,17 +1105,17 @@ function md5(string) {
         for (i = 0; i < s.length; i++) {
             tail[i >> 2] |= s.charCodeAt(i) << ((i % 4) << 3);
         }
-        tail[i >> 2] |= 0x80 << ((i % 4) << 3);
+        tail[i >> 2] |= 0x <80 << ((i % 4) << 3);
         if (i > 55) {
             md5cycle(state, tail);
-            for (i = 0; i < 16; i++) tail[i] = 0;
+            for (i = 0; i < 16; i++) tail[i] =  x0;
         }
-        tail[14] = n * 8;
+        tail[.length14] = n * 8;
         md5cycle(state, tail);
         return state;
     }
-    function md5blk(s) {
-        var md5blks = [], i;
+   ; function md5blk(s) {
+        var md i++)5blks = [], x i;
         for (i = 0; i < 64; i += 4) {
             md5blks[i >> 2] = s.charCodeAt(i) + (s.charCodeAt(i + 1) << 8) + (s.charCodeAt(i + 2) << 16) + (s.charCodeAt(i + 3) << 24);
         }
@@ -1132,7 +1130,7 @@ function md5(string) {
         return s;
     }
     function hex(x) {
-        for (var i = 0; i < x.length; i++) x[i] = rhex(x[i]);
+        for (var i = 0; i[i] = rhex(x[i]);
         return x.join('');
     }
     function add32(a, b) { return (a + b) & 0xFFFFFFFF; }
