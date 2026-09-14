@@ -1,7 +1,8 @@
 /**
  * 4KHDHub Nuvio Provider
- * Shows 4K servers (largest first), then 1080p servers (largest first)
- * PixelDrain kept only if no alternative exists
+ * - Shows ALL 4K servers (largest first) — NO removal
+ * - Shows 1080p servers (largest first) — removes smallest ONLY if more than one
+ * - PixelDrain kept only if no alternative exists
  */
 
 var BASE_URL = "https://4khdhub.one";
@@ -418,7 +419,7 @@ function processPostPage(html, postUrl, type, season, episode, showTitle, runtim
             }
         }
 
-        // ── إذا يوجد سيرفر بديل → احذف PixelDrain. إذا لا → أبقيه ────────
+        // ── إذا يوجد سيرفر بديل → احذف PixelDrain ────────────────────────
         var filtered = [];
         for (var m = 0; m < qualityFiltered.length; m++) {
             var stx = qualityFiltered[m];
@@ -433,7 +434,7 @@ function processPostPage(html, postUrl, type, season, episode, showTitle, runtim
             filtered.push(stx);
         }
 
-        console.log("[4khdhub] after PixelDrain logic: " + filtered.length + " (hasNonPixeldrain=" + hasNonPixeldrain + ")");
+        console.log("[4khdhub] after PixelDrain logic: " + filtered.length);
 
         // ── ترتيب: 4K أولاً ثم 1080p، وكل جودة من الأكبر للأصغر ───────────
         filtered.sort(function(a, b) {
@@ -448,14 +449,38 @@ function processPostPage(html, postUrl, type, season, episode, showTitle, runtim
             return parseSize(b._sizeRaw) - parseSize(a._sizeRaw);
         });
 
-        // ── احذف آخر سيرفر (الأصغر حجماً) ────────────────────────────────
-        if (filtered.length > 1) {
-            var removed = filtered.pop();
-            console.log("[4khdhub] removed smallest: " + removed._sizeRaw + " " + removed._host);
+        // ── احذف الأصغر من 1080p فقط (إذا كان فيه أكثر من واحد) ──────────
+        // ملاحظة: لا نطبق هذا على 4K أبداً
+        var count1080 = 0;
+        for (var p = 0; p < filtered.length; p++) {
+            var qp = String(filtered[p].quality || "").toUpperCase();
+            if (qp === "1080P") count1080++;
         }
 
-        console.log("[4khdhub] final streams: " + filtered.length);
-        return filtered;
+        var removeIndexes = [];
+        
+        if (count1080 > 1) {
+            for (var b = filtered.length - 1; b >= 0; b--) {
+                var qb2 = String(filtered[b].quality || "").toUpperCase();
+                if (qb2 === "1080P") {
+                    removeIndexes.push(b);
+                    console.log("[4khdhub] removing smallest 1080p: " + filtered[b]._sizeRaw + " " + filtered[b]._host);
+                    break;
+                }
+            }
+        } else {
+            console.log("[4khdhub] only " + count1080 + " 1080p stream(s) — keeping all");
+        }
+
+        var finalList = [];
+        for (var c = 0; c < filtered.length; c++) {
+            if (removeIndexes.indexOf(c) === -1) {
+                finalList.push(filtered[c]);
+            }
+        }
+
+        console.log("[4khdhub] final streams: " + finalList.length + " (1080p=" + count1080 + ")");
+        return finalList;
     });
 }
 
