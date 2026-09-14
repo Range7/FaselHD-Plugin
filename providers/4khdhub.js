@@ -1,8 +1,8 @@
 /**
  * 4KHDHub Nuvio Provider
- * - Sort: 4K first (largest→smallest), then 1080p (largest→smallest)
- * - Size displayed: REAL size
- * - ALL 4K servers kept (no removal)
+ * - Array order: 4K first (largest→smallest), then 1080p (largest→smallest)
+ * - NO invisible sortTag (it was breaking the display)
+ * - ALL 4K kept
  * - 1080p removes smallest ONLY if more than one
  * - PixelDrain kept only if no alternative exists
  */
@@ -65,19 +65,6 @@ function onSettings() {
 
 function resolveSettings(customSettings) {
     return {};
-}
-
-function getInvertedSortTag(score, maxScore) {
-    maxScore = maxScore || 999999;
-    var val = Math.max(0, parseInt(score, 10) || 0);
-    var inv = Math.max(0, maxScore - val);
-    var bin = inv.toString(2);
-    while (bin.length < 20) bin = "0" + bin;
-    var chars = [];
-    for (var i = 0; i < bin.length; i++) {
-        chars.push(bin.charAt(i) === "1" ? "\uFEFF" : "\u200B");
-    }
-    return chars.join("");
 }
 
 function getStreams(tmdbId, mediaType, season, episode) {
@@ -470,6 +457,19 @@ function processPostPage(html, postUrl, type, season, episode, showTitle, runtim
                 finalList.push(filtered[c]);
             }
         }
+
+        // ترتيب نهائي: 4K أولاً (الأكبر→الأصغر)، ثم 1080p (الأكبر→الأصغر)
+        finalList.sort(function(a, b) {
+            var qa = String(a.quality || "").toUpperCase();
+            var qb = String(b.quality || "").toUpperCase();
+            var aIs4K = (qa === "4K" || qa === "2160P");
+            var bIs4K = (qb === "4K" || qb === "2160P");
+            
+            if (aIs4K && !bIs4K) return -1;
+            if (!aIs4K && bIs4K) return 1;
+            
+            return parseSize(b._sizeRaw) - parseSize(a._sizeRaw);
+        });
 
         console.log("[4khdhub] final streams: " + finalList.length + " (1080p=" + count1080 + ")");
         return finalList;
@@ -911,17 +911,9 @@ function makeStream(item, cdnUrl, isTv, showTitle, season, episode, settings, ru
     var line3 = [bit10Tag, dvTag, hdrTag, codec, audio].filter(Boolean).join(" • ");
     var streamTitle = [line1, line2, line3].filter(Boolean).join("\n");
 
-    // ═════════════════════════════════════════════════════════════════════════
-    // الترتيب: 4K أولاً (ثم 1080p)، وداخل كل جودة: الأكبر حجماً أولاً
-    // الحجم المعروض هو الحجم الحقيقي (size) — البونص فقط للترتيب الداخلي
-    // ═════════════════════════════════════════════════════════════════════════
-    var sizeInMB = Math.round(parseSize(size) / 1048576);
-    var is4K = (qualityUp === "4K" || qualityUp === "2160P");
-    var sortScore = sizeInMB + (is4K ? 99999999 : 0);
-    var sortTag = getInvertedSortTag(sortScore, 999999999);
-
+    // بدون sortTag — الاعتماد على ترتيب المصفوفة فقط
     return {
-        name: sortTag + mainTitle,
+        name: mainTitle,
         title: mainTitle,
         size: streamTitle,
         url: cdnUrl,
@@ -1105,17 +1097,17 @@ function md5(string) {
         for (i = 0; i < s.length; i++) {
             tail[i >> 2] |= s.charCodeAt(i) << ((i % 4) << 3);
         }
-        tail[i >> 2] |= 0x <80 << ((i % 4) << 3);
+        tail[i >> 2] |= 0x80 << ((i % 4) << 3);
         if (i > 55) {
             md5cycle(state, tail);
-            for (i = 0; i < 16; i++) tail[i] =  x0;
+            for (i = 0; i < 16; i++) tail[i] = 0;
         }
-        tail[.length14] = n * 8;
+        tail[14] = n * 8;
         md5cycle(state, tail);
         return state;
     }
-   ; function md5blk(s) {
-        var md i++)5blks = [], x i;
+    function md5blk(s) {
+        var md5blks = [], i;
         for (i = 0; i < 64; i += 4) {
             md5blks[i >> 2] = s.charCodeAt(i) + (s.charCodeAt(i + 1) << 8) + (s.charCodeAt(i + 2) << 16) + (s.charCodeAt(i + 3) << 24);
         }
@@ -1130,7 +1122,7 @@ function md5(string) {
         return s;
     }
     function hex(x) {
-        for (var i = 0; i[i] = rhex(x[i]);
+        for (var i = 0; i < x.length; i++) x[i] = rhex(x[i]);
         return x.join('');
     }
     function add32(a, b) { return (a + b) & 0xFFFFFFFF; }
