@@ -284,39 +284,38 @@ function makeStream(entry, rank) {
     var host = pickHost(entry.url);
     var typeTag = /\.m3u8(\?|$)/i.test(entry.url) ? "HLS" : (/\.mkv(\?|$)/i.test(entry.url) ? "MKV" : "MP4");
 
-    // ── name نظيف بدون إيموجي ─────────────────────────────────────────────
-    var nameClean = "2Peckle " + label;
-    if (size) nameClean += " • " + size;
-
-    // ── title يحتوي كل الملصقات والمعلومات ─────────────────────────────────
+    // ── title الرئيسي (سطر واحد، مع أيقونة الجودة والحجم) ─────────────────
     var qIcon = q === "4K" ? "🎞️" : "📺";
-    var titleMain = "🔍 2Peckle " + qIcon + " " + label;
-    if (size) titleMain += " • 📦 " + size;
+    var mainTitle = "🔍 2Peckle " + qIcon + " " + label;
+    if (size) mainTitle += " • 📦 " + size;
 
-    var infoParts = [];
-    if (serverInfo.source)  infoParts.push("🎥 " + serverInfo.source);
-    if (serverInfo.codec)   infoParts.push("🎞️ " + serverInfo.codec);
-    if (serverInfo.audio)   infoParts.push("🔊 " + serverInfo.audio);
-    if (serverInfo.bitrate) infoParts.push("📊 " + serverInfo.bitrate);
-    if (size)               infoParts.push("📦 " + size);
-    infoParts.push("📁 " + typeTag);
-    if (host)               infoParts.push("🌐 " + host);
-    infoParts.push("✅ " + qUp);
-    if (serverInfo.group)   infoParts.push("🏷️ " + serverInfo.group);
+    // ── معلومات السيرفر (حقل size) — أسطر مع ملصقات ──────────────────────
+    var line1 = [
+        serverInfo.source ? "🎥 " + serverInfo.source : "",
+        serverInfo.codec  ? "🎞️ " + serverInfo.codec  : "",
+        serverInfo.audio  ? "🔊 " + serverInfo.audio  : ""
+    ].filter(Boolean).join(" • ");
 
-    var infoLine = infoParts.join(" • ");
+    var line2 = serverInfo.bitrate ? "📊 " + serverInfo.bitrate : "";
 
-    // titleFull = السطر الرئيسي + سطر المعلومات
-    var titleFull = titleMain + "\n" + infoLine;
-    if (!infoLine) titleFull = titleMain;
+    var line3 = [
+        typeTag ? "📁 " + typeTag : "",
+        host    ? "🌐 " + host    : "",
+        "✅ " + qUp
+    ].filter(Boolean).join(" • ");
+
+    var line4 = serverInfo.group ? "🏷️ " + serverInfo.group : "";
+
+    var streamTitle = [line1, line2, line3, line4].filter(Boolean).join("\n");
+    if (!streamTitle) streamTitle = "🔍 2Peckle";
 
     var score = q === "4K" ? 2 : 1;
     var sortTag = getInvertedSortTag(score, 10);
 
     return {
-        name: sortTag + nameClean,
-        title: titleFull,
-        size: size || "",
+        name: sortTag + mainTitle,
+        title: mainTitle,
+        size: streamTitle,
         url: entry.url,
         quality: qUp,
         headers: {
