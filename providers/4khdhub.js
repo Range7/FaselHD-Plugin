@@ -1,10 +1,10 @@
 /**
  * 4KHDHub Nuvio Provider
- * - Array order: 4K first (largest→smallest), then 1080p (largest→smallest)
- * - NO invisible sortTag (it was breaking the display)
+ * - Visible number prefix (01, 02, 03...) forces correct order
+ * - 4K first (largest→smallest), then 1080p (largest→smallest)
  * - ALL 4K kept
  * - 1080p removes smallest ONLY if more than one
- * - PixelDrain kept only if no alternative exists
+ * - PixelDrain kept only if no alternative
  */
 
 var BASE_URL = "https://4khdhub.one";
@@ -458,7 +458,7 @@ function processPostPage(html, postUrl, type, season, episode, showTitle, runtim
             }
         }
 
-        // ترتيب نهائي: 4K أولاً (الأكبر→الأصغر)، ثم 1080p (الأكبر→الأصغر)
+        // ── ترتيب: 4K أولاً (الأكبر→الأصغر)، ثم 1080p (الأكبر→الأصغر) ────
         finalList.sort(function(a, b) {
             var qa = String(a.quality || "").toUpperCase();
             var qb = String(b.quality || "").toUpperCase();
@@ -470,6 +470,16 @@ function processPostPage(html, postUrl, type, season, episode, showTitle, runtim
             
             return parseSize(b._sizeRaw) - parseSize(a._sizeRaw);
         });
+
+        // ═════════════════════════════════════════════════════════════════
+        // إضافة أرقام مرئية (01، 02، 03...) — تجبر Nuvio على الترتيب
+        // الصحيح، والأرقام تظهر للسيرفرات فقط، الحجم يبقى حقيقي
+        // ═════════════════════════════════════════════════════════════════
+        for (var t = 0; t < finalList.length; t++) {
+            var num = (t + 1);
+            var numStr = num < 10 ? "0" + num : "" + num;
+            finalList[t].name = numStr + " • " + finalList[t].title;
+        }
 
         console.log("[4khdhub] final streams: " + finalList.length + " (1080p=" + count1080 + ")");
         return finalList;
@@ -911,7 +921,6 @@ function makeStream(item, cdnUrl, isTv, showTitle, season, episode, settings, ru
     var line3 = [bit10Tag, dvTag, hdrTag, codec, audio].filter(Boolean).join(" • ");
     var streamTitle = [line1, line2, line3].filter(Boolean).join("\n");
 
-    // بدون sortTag — الاعتماد على ترتيب المصفوفة فقط
     return {
         name: mainTitle,
         title: mainTitle,
