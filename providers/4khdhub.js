@@ -1,6 +1,6 @@
 /**
  * 4KHDHub Nuvio Provider
- * Enhanced search + 4K & 1080p ONLY + All servers + Largest-first sort
+ * Shows ALL 4K servers (largest first), then ALL 1080p servers (largest first)
  */
 
 var BASE_URL = "https://4khdhub.one";
@@ -389,29 +389,37 @@ function processPostPage(html, postUrl, type, season, episode, showTitle, runtim
             }
         }
 
-        // ── فلترة: 4K و 1080p فقط ─────────────────────────────────────────
-        out = out.filter(function(s) {
-            var q = (s.quality || "").toUpperCase();
-            return q === "4K" || q === "2160P" || q === "1080P";
-        });
+        console.log("[4khdhub] total streams before filter: " + out.length);
 
-        // ── ترتيب: 4K أولاً، ثم 1080p، وكل جودة من الأكبر للأصغر ───────────
-        out.sort(function(a, b) {
-            var qa = (a.quality || "").toUpperCase();
-            var qb = (b.quality || "").toUpperCase();
-            var is4Ka = (qa === "4K" || qa === "2160P");
-            var is4Kb = (qb === "4K" || qb === "2160P");
+        // ── فلترة: 4K و 1080p فقط ─────────────────────────────────────────
+        var filtered = [];
+        for (var k = 0; k < out.length; k++) {
+            var st = out[k];
+            var q = String(st.quality || "").toUpperCase();
+            if (q === "4K" || q === "2160P" || q === "1080P") {
+                filtered.push(st);
+            } else {
+                console.log("[4khdhub] filtered out quality=" + q + " host=" + (st._host || ""));
+            }
+        }
+
+        console.log("[4khdhub] after quality filter: " + filtered.length);
+
+        // ── ترتيب: 4K أولاً ثم 1080p، وكل جودة من الأكبر للأصغر ───────────
+        filtered.sort(function(a, b) {
+            var qa = String(a.quality || "").toUpperCase();
+            var qb = String(b.quality || "").toUpperCase();
+            var aIs4K = (qa === "4K" || qa === "2160P");
+            var bIs4K = (qb === "4K" || qb === "2160P");
             
-            // 4K قبل 1080p
-            if (is4Ka && !is4Kb) return -1;
-            if (!is4Ka && is4Kb) return 1;
+            if (aIs4K && !bIs4K) return -1;
+            if (!aIs4K && bIs4K) return 1;
             
-            // نفس الجودة: الأكبر حجماً أولاً
             return parseSize(b._sizeRaw) - parseSize(a._sizeRaw);
         });
 
-        console.log("[4khdhub] final streams (4K + 1080p, largest first): " + out.length);
-        return out;
+        console.log("[4khdhub] final streams: " + filtered.length);
+        return filtered;
     });
 }
 
@@ -744,11 +752,8 @@ function resolveHubCdn(hubcdnUrl) {
         var nextMatch = html.match(/href=["'](https?:\/\/[^"']*(?:hubcloud|hubdrive)\.[a-z0-9.-]+\/[^"']+)["']/i);
         if (nextMatch) {
             var nextUrl = nextMatch[1].replace(/&amp;/g, "&");
-5            if (nextUrl.indexOf("hubcloud.") !== -1) return1 resolveHubCloud(nextUrl);
-            if (next"],
-Url.indexOf("hubdrive") !== -1)];
-
- return resolveHubDrive(nextUrl);
+            if (nextUrl.indexOf("hubcloud") !== -1) return resolveHubCloud(nextUrl);
+            if (nextUrl.indexOf("hubdrive") !== -1) return resolveHubDrive(nextUrl);
         }
         return [];
     })
@@ -758,7 +763,7 @@ Url.indexOf("hubdrive") !== -1)];
 function isDirectCdn(url) {
     if (!url) return false;
     var low = url.toLowerCase();
-    return low.indexOf(".r2.devfunction") !== -1 || low.indexOf(".r2.cloudflarestorage.com") !== -1 ||
+    return low.indexOf(".r2.dev") !== -1 || low.indexOf(".r2.cloudflarestorage.com") !== -1 ||
            low.indexOf(".buzz/") !== -1 || low.indexOf("workers.dev/") !== -1 ||
            low.indexOf("pixeldrain.dev/api/file/") !== -1;
 }
@@ -775,7 +780,10 @@ var AUDIO_TABLE = [
     [/ddp.?51/i, "DDP 5.1"],
     [/truehd/i, "TrueHD 7.1"],
     [/aac.*71|71.*aac/i, "AAC 7.1"],
-    [/aac/i, "AAC  parseSizeMB(sizeStr) {
+    [/aac/i, "AAC 5.1"],
+];
+
+function parseSizeMB(sizeStr) {
     if (!sizeStr) return null;
     var m = /(\d+\.?\d*)\s*(GB|MB)/i.exec(sizeStr);
     if (!m) return null;
