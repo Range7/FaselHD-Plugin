@@ -1,6 +1,7 @@
 /**
  * 4KHDHub Nuvio Provider
- * Shows ALL 4K servers (largest first), then ALL 1080p servers (largest first)
+ * Shows 4K servers (largest first), then 1080p servers (largest first)
+ * PixelDrain kept only if no alternative exists
  */
 
 var BASE_URL = "https://4khdhub.one";
@@ -391,19 +392,48 @@ function processPostPage(html, postUrl, type, season, episode, showTitle, runtim
 
         console.log("[4khdhub] total streams before filter: " + out.length);
 
-        // ── فلترة: 4K و 1080p فقط ─────────────────────────────────────────
-        var filtered = [];
+        // ── فلترة الجودة: 4K و 1080p فقط ─────────────────────────────────
+        var qualityFiltered = [];
         for (var k = 0; k < out.length; k++) {
             var st = out[k];
             var q = String(st.quality || "").toUpperCase();
             if (q === "4K" || q === "2160P" || q === "1080P") {
-                filtered.push(st);
+                qualityFiltered.push(st);
             } else {
-                console.log("[4khdhub] filtered out quality=" + q + " host=" + (st._host || ""));
+                console.log("[4khdhub] filtered out quality=" + q);
             }
         }
 
-        console.log("[4khdhub] after quality filter: " + filtered.length);
+        console.log("[4khdhub] after quality filter: " + qualityFiltered.length);
+
+        // ── فحص: هل يوجد سيرفر غير PixelDrain؟ ──────────────────────────
+        var hasNonPixeldrain = false;
+        for (var n = 0; n < qualityFiltered.length; n++) {
+            var hostLow = String(qualityFiltered[n]._host || "").toLowerCase();
+            var urlLow = String(qualityFiltered[n].url || "").toLowerCase();
+            var isPd = (hostLow.indexOf("pixeldrain") !== -1 || urlLow.indexOf("pixeldrain") !== -1);
+            if (!isPd) {
+                hasNonPixeldrain = true;
+                break;
+            }
+        }
+
+        // ── إذا يوجد سيرفر بديل → احذف PixelDrain. إذا لا → أبقيه ────────
+        var filtered = [];
+        for (var m = 0; m < qualityFiltered.length; m++) {
+            var stx = qualityFiltered[m];
+            var hostLow2 = String(stx._host || "").toLowerCase();
+            var urlLow2 = String(stx.url || "").toLowerCase();
+            var isPd2 = (hostLow2.indexOf("pixeldrain") !== -1 || urlLow2.indexOf("pixeldrain") !== -1);
+            
+            if (isPd2 && hasNonPixeldrain) {
+                console.log("[4khdhub] removed PixelDrain (has alternative): " + stx._host);
+                continue;
+            }
+            filtered.push(stx);
+        }
+
+        console.log("[4khdhub] after PixelDrain logic: " + filtered.length + " (hasNonPixeldrain=" + hasNonPixeldrain + ")");
 
         // ── ترتيب: 4K أولاً ثم 1080p، وكل جودة من الأكبر للأصغر ───────────
         filtered.sort(function(a, b) {
@@ -417,6 +447,12 @@ function processPostPage(html, postUrl, type, season, episode, showTitle, runtim
             
             return parseSize(b._sizeRaw) - parseSize(a._sizeRaw);
         });
+
+        // ── احذف آخر سيرفر (الأصغر حجماً) ────────────────────────────────
+        if (filtered.length > 1) {
+            var removed = filtered.pop();
+            console.log("[4khdhub] removed smallest: " + removed._sizeRaw + " " + removed._host);
+        }
 
         console.log("[4khdhub] final streams: " + filtered.length);
         return filtered;
