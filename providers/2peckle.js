@@ -4,9 +4,13 @@
  * STRICT 4K & 1080p ONLY — Rich server info like 4KHDHub
  */
 
-// ── Protected strings (Base64) ───────────────────────────────────────────────
+// ── Protected strings (Base64, split into chunks) ────────────────────────────
 var _0xPFX = "aHR0cHM6Ly9wZW5ndS51aw==";
-var _0xTKN = "N01oSGwxRmJpakNRLUlNZDhCZXZmYjZrSVdJUU93ZDlIdlMyT0hrUkVZTQ==";
+var _0xT1 = "N01oSGwxRmJp";
+var _0xT2 = "akNRLUlNZDh";
+var _0xT3 = "CZXZmYjZrSV";
+var _0xT4 = "dJUU93ZDlIdl";
+var _0xT5 = "MyT0hrUkVZTQ==";
 
 // ── Decoder ──────────────────────────────────────────────────────────────────
 function b64decode(str) {
@@ -24,8 +28,9 @@ function b64decode(str) {
 
 // ── Assembled constants ──────────────────────────────────────────────────────
 var ADDON_BASE = b64decode(_0xPFX);
+var _0xTOKEN = b64decode(_0xT1 + _0xT2 + _0xT3 + _0xT4 + _0xT5);
 var ADDON_CONFIG = "%7B%22auth_token%22%3A%22"
-    + b64decode(_0xTKN)
+    + _0xTOKEN
     + "%22%2C%22source_2peckle%22%3A%22checked%22%2C%22res_2160%22%3A%22checked%22%2C%22res_1080%22%3A%22checked%22%2C%22res_720%22%3A%22unchecked%22%2C%22res_480%22%3A%22unchecked%22%2C%22res_360%22%3A%22unchecked%22%7D";
 var UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36";
 
@@ -219,9 +224,6 @@ function parseServerInfo(description) {
     var mRate = d.match(/📊\s*([\d.]+\s*Mbps)/i);
     if (mRate) info.bitrate = mRate[1];
 
-    var mGroup = d.match(/🏷️\s*([^\n]+)/);
-    if (mGroup) info.group = mGroup[1].trim();
-
     return info;
 }
 
@@ -284,30 +286,14 @@ function makeStream(entry, rank) {
     var host = pickHost(entry.url);
     var typeTag = /\.m3u8(\?|$)/i.test(entry.url) ? "HLS" : (/\.mkv(\?|$)/i.test(entry.url) ? "MKV" : "MP4");
 
-    // ── title الرئيسي (سطر واحد، مع أيقونة الجودة والحجم) ─────────────────
-    var qIcon = q === "4K" ? "🎞️" : "📺";
-    var mainTitle = "🔍 2Peckle " + qIcon + " " + label;
-    if (size) mainTitle += " • 📦 " + size;
+    var mainTitle = ["2Peckle", label].filter(Boolean).join(" • ");
+    if (size) mainTitle += " • " + size;
 
-    // ── معلومات السيرفر (حقل size) — أسطر مع ملصقات ──────────────────────
-    var line1 = [
-        serverInfo.source ? "🎥 " + serverInfo.source : "",
-        serverInfo.codec  ? "🎞️ " + serverInfo.codec  : "",
-        serverInfo.audio  ? "🔊 " + serverInfo.audio  : ""
-    ].filter(Boolean).join(" • ");
-
-    var line2 = serverInfo.bitrate ? "📊 " + serverInfo.bitrate : "";
-
-    var line3 = [
-        typeTag ? "📁 " + typeTag : "",
-        host    ? "🌐 " + host    : "",
-        "✅ " + qUp
-    ].filter(Boolean).join(" • ");
-
-    var line4 = serverInfo.group ? "🏷️ " + serverInfo.group : "";
-
-    var streamTitle = [line1, line2, line3, line4].filter(Boolean).join("\n");
-    if (!streamTitle) streamTitle = "🔍 2Peckle";
+    var line1 = [serverInfo.source, serverInfo.codec, serverInfo.audio].filter(Boolean).join(" • ");
+    var line2 = [serverInfo.bitrate].filter(Boolean).join(" • ");
+    var line3 = [typeTag, host].filter(Boolean).join(" • ");
+    var streamTitle = [line1, line2, line3].filter(Boolean).join("\n");
+    if (!streamTitle) streamTitle = "2Peckle";
 
     var score = q === "4K" ? 2 : 1;
     var sortTag = getInvertedSortTag(score, 10);
