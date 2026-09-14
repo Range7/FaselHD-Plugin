@@ -274,7 +274,6 @@ function makeStream(entry, rank) {
     var q = entry.quality;
     var qUp = q.toUpperCase();
 
-    // ── name = نص نظيف فقط (بدون إيموجي) — هذا اللي Nuvio يعرضه ─────────────
     var label = stripEmoji(s.name);
     if (!label) label = qUp;
     if (q === "1080p" && !/1080/i.test(label)) label = "1080p " + label;
@@ -285,44 +284,39 @@ function makeStream(entry, rank) {
     var host = pickHost(entry.url);
     var typeTag = /\.m3u8(\?|$)/i.test(entry.url) ? "HLS" : (/\.mkv(\?|$)/i.test(entry.url) ? "MKV" : "MP4");
 
-    // name نظيف — للإصلاح: sortTag + نص بدون إيموجي
+    // ── name نظيف بدون إيموجي ─────────────────────────────────────────────
     var nameClean = "2Peckle " + label;
     if (size) nameClean += " • " + size;
 
-    // ── title = العنوان الرئيسي مع الإيموجي ─────────────────────────────────
+    // ── title يحتوي كل الملصقات والمعلومات ─────────────────────────────────
     var qIcon = q === "4K" ? "🎞️" : "📺";
     var titleMain = "🔍 2Peckle " + qIcon + " " + label;
     if (size) titleMain += " • 📦 " + size;
 
-    // ── size = معلومات السيرفر مع الإيموجي (متعدد الأسطر) ────────────────────
-    var line1Parts = [];
-    if (serverInfo.source) line1Parts.push("🎥 " + serverInfo.source);
-    if (serverInfo.codec)  line1Parts.push("🎞️ " + serverInfo.codec);
-    if (serverInfo.audio)  line1Parts.push("🔊 " + serverInfo.audio);
-    var line1 = line1Parts.join(" • ");
+    var infoParts = [];
+    if (serverInfo.source)  infoParts.push("🎥 " + serverInfo.source);
+    if (serverInfo.codec)   infoParts.push("🎞️ " + serverInfo.codec);
+    if (serverInfo.audio)   infoParts.push("🔊 " + serverInfo.audio);
+    if (serverInfo.bitrate) infoParts.push("📊 " + serverInfo.bitrate);
+    if (size)               infoParts.push("📦 " + size);
+    infoParts.push("📁 " + typeTag);
+    if (host)               infoParts.push("🌐 " + host);
+    infoParts.push("✅ " + qUp);
+    if (serverInfo.group)   infoParts.push("🏷️ " + serverInfo.group);
 
-    var line2Parts = [];
-    if (serverInfo.bitrate) line2Parts.push("📊 " + serverInfo.bitrate);
-    if (serverInfo.size)    line2Parts.push("📦 " + serverInfo.size);
-    var line2 = line2Parts.join(" • ");
+    var infoLine = infoParts.join(" • ");
 
-    var line3Parts = ["📁 " + typeTag];
-    if (host) line3Parts.push("🌐 " + host);
-    line3Parts.push("✅ " + qUp);
-    var line3 = line3Parts.join(" • ");
-
-    var line4 = serverInfo.group ? ("🏷️ " + serverInfo.group) : "";
-
-    var sizeInfo = [line1, line2, line3, line4].filter(Boolean).join("\n");
-    if (!sizeInfo) sizeInfo = "🔍 2Peckle";
+    // titleFull = السطر الرئيسي + سطر المعلومات
+    var titleFull = titleMain + "\n" + infoLine;
+    if (!infoLine) titleFull = titleMain;
 
     var score = q === "4K" ? 2 : 1;
     var sortTag = getInvertedSortTag(score, 10);
 
     return {
-        name: sortTag + nameClean,   // ← نظيف بدون إيموجي
-        title: titleMain,             // ← العنوان مع إيموجي
-        size: sizeInfo,               // ← معلومات السيرفر مع إيموجي
+        name: sortTag + nameClean,
+        title: titleFull,
+        size: size || "",
         url: entry.url,
         quality: qUp,
         headers: {
