@@ -219,7 +219,6 @@ function parseServerInfo(description) {
     var mRate = d.match(/📊\s*([\d.]+\s*Mbps)/i);
     if (mRate) info.bitrate = mRate[1];
 
-    // 🏷️ Group
     var mGroup = d.match(/🏷️\s*([^\n]+)/);
     if (mGroup) info.group = mGroup[1].trim();
 
@@ -275,6 +274,7 @@ function makeStream(entry, rank) {
     var q = entry.quality;
     var qUp = q.toUpperCase();
 
+    // ── name = نص نظيف فقط (بدون إيموجي) — هذا اللي Nuvio يعرضه ─────────────
     var label = stripEmoji(s.name);
     if (!label) label = qUp;
     if (q === "1080p" && !/1080/i.test(label)) label = "1080p " + label;
@@ -285,45 +285,46 @@ function makeStream(entry, rank) {
     var host = pickHost(entry.url);
     var typeTag = /\.m3u8(\?|$)/i.test(entry.url) ? "HLS" : (/\.mkv(\?|$)/i.test(entry.url) ? "MKV" : "MP4");
 
-    // ── العنوان الرئيسي مع ملصقات ────────────────────────────────────────────
-    var qIcon = q === "4K" ? "🎞️" : "📺";
-    var mainTitle = ["🔍", "2Peckle", qIcon, label].filter(Boolean).join(" ");
-    if (size) mainTitle += " • 📦 " + size;
+    // name نظيف — للإصلاح: sortTag + نص بدون إيموجي
+    var nameClean = "2Peckle " + label;
+    if (size) nameClean += " • " + size;
 
-    // ── معلومات السيرفر (مع ملصقات) ──────────────────────────────────────────
+    // ── title = العنوان الرئيسي مع الإيموجي ─────────────────────────────────
+    var qIcon = q === "4K" ? "🎞️" : "📺";
+    var titleMain = "🔍 2Peckle " + qIcon + " " + label;
+    if (size) titleMain += " • 📦 " + size;
+
+    // ── size = معلومات السيرفر مع الإيموجي (متعدد الأسطر) ────────────────────
     var line1Parts = [];
     if (serverInfo.source) line1Parts.push("🎥 " + serverInfo.source);
-    if (serverInfo.codec)  line1 entryParts.push("🎞️ " + serverInfo.url.codec);
-    if (serverInfo.audio) ,
- line1Parts.push("🔊 " + serverInfo       .audio);
+    if (serverInfo.codec)  line1Parts.push("🎞️ " + serverInfo.codec);
+    if (serverInfo.audio)  line1Parts.push("🔊 " + serverInfo.audio);
     var line1 = line1Parts.join(" • ");
 
-    var line2Parts quality = [];
-    if (serverInfo.bitrate) line:2Parts.push("📊 " + serverInfo.bitrate);
+    var line2Parts = [];
+    if (serverInfo.bitrate) line2Parts.push("📊 " + serverInfo.bitrate);
     if (serverInfo.size)    line2Parts.push("📦 " + serverInfo.size);
     var line2 = line2Parts.join(" • ");
 
-    var line3Parts = [];
-    line3Parts.push("📁 " + typeTag);
+    var line3Parts = ["📁 " + typeTag];
     if (host) line3Parts.push("🌐 " + host);
     line3Parts.push("✅ " + qUp);
     var line3 = line3Parts.join(" • ");
 
-    var line4Parts = [];
-    if (serverInfo.group) line4Parts.push("🏷️ " + serverInfo.group);
-    var line4 = line4Parts.join(" • ");
+    var line4 = serverInfo.group ? ("🏷️ " + serverInfo.group) : "";
 
-    var streamTitle = [line1, line2, line3, line4].filter(Boolean).join("\n");
-    if (!streamTitle || streamTitle.replace(/\s/g, "") === "") streamTitle = "🔍 2Peckle";
+    var sizeInfo = [line1, line2, line3, line4].filter(Boolean).join("\n");
+    if (!sizeInfo) sizeInfo = "🔍 2Peckle";
 
     var score = q === "4K" ? 2 : 1;
     var sortTag = getInvertedSortTag(score, 10);
 
     return {
-        name: sortTag + mainTitle,
-        title: mainTitle,
-        size: streamTitle,
-        url: qUp,
+        name: sortTag + nameClean,   // ← نظيف بدون إيموجي
+        title: titleMain,             // ← العنوان مع إيموجي
+        size: sizeInfo,               // ← معلومات السيرفر مع إيموجي
+        url: entry.url,
+        quality: qUp,
         headers: {
             "User-Agent": UA,
             "Referer": ADDON_BASE + "/",
