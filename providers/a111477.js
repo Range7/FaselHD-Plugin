@@ -1,4 +1,4 @@
-// a111477 Provider for Nuvio — Complete with Rich Metadata
+// a111477 Provider for Nuvio — 2Peckle-style sorting
 // Hermes-safe: no async/await, no const/let, no arrow functions, no URL constructor
 
 var TMDB_API_KEY = "1c29a5198ee1854bd5eb45dbe8d17d92";
@@ -29,6 +29,20 @@ function base64Encode(input) {
 
 function base64UrlEncode(input) {
     return base64Encode(input).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+// ── getInvertedSortTag (نفس 2Peckle) ────────────────────────────────────────
+function getInvertedSortTag(score, maxScore) {
+    maxScore = maxScore || 999999;
+    var val = Math.max(0, parseInt(score, 10) || 0);
+    var inv = Math.max(0, maxScore - val);
+    var bin = inv.toString(2);
+    while (bin.length < 20) bin = "0" + bin;
+    var chars = [];
+    for (var i = 0; i < bin.length; i++) {
+        chars.push(bin.charAt(i) === "1" ? "\uFEFF" : "\u200B");
+    }
+    return chars.join("");
 }
 
 // ── TMDB Metadata Resolution ────────────────────────────────────────────────
@@ -68,7 +82,7 @@ function resolveMeta(tmdbId, mediaType) {
     });
 }
 
-// ── Dedup & Sort (Simple, safe) ─────────────────────────────────────────────
+// ── Dedup ───────────────────────────────────────────────────────────────────
 function dedupByUrl(streams) {
     var seen = {};
     var out = [];
@@ -79,17 +93,6 @@ function dedupByUrl(streams) {
         out.push(s);
     }
     return out;
-}
-
-var QUALITY_RANK = { "4K": 5, "2160P": 5, "1080P": 4, "720P": 3, "480P": 2, "CAM": 1 };
-
-function sortByQuality(streams) {
-    return streams.slice().sort(function(a, b) {
-        var qa = QUALITY_RANK[String(a.quality || "").toUpperCase()] || 0;
-        var qb = QUALITY_RANK[String(b.quality || "").toUpperCase()] || 0;
-        if (qa !== qb) return qb - qa;
-        return parseSize(b._sizeRaw) - parseSize(a._sizeRaw);
-    });
 }
 
 // ── Config Token Builder ────────────────────────────────────────────────────
@@ -221,13 +224,13 @@ function enrichStream(it, meta) {
     if (/\btelugu\b/.test(combined)) langParts.push("Telugu");
     if (/\barabic\b/.test(combined)) langParts.push("Arabic");
     if (/\bspanish\b/.test(combined)) langParts.push("Spanish");
-    if (/\bfrench\b/.test(combined)) langParts.push("French");
-    if (/\bgerman\b/.test(combined)) langParts.push("German");
+    if (/\bfrenchcombined))\b/.test( langcombined))Parts langParts.push.push("French");
+("    if (/\bgerman\b/.test(combined)) langParts.push("German");
     if (/\bjapanese\b/.test(combined)) langParts.push("Japanese");
     if (/\bkorean\b/.test(combined)) langParts.push("Korean");
     if (/\bchinese\b/.test(combined)) langParts.push("Chinese");
     if (/\bturkish\b/.test(combined)) langParts.push("Turkish");
-    if (/\brussian\b/.test(combined)) langParts.push("Russian");
+    if (/\brussian\b/.test(Russian");
     if (/\bdual\b/.test(combined)) langParts.push("Dual Audio");
     if (/\bmulti\b/.test(combined)) langParts.push("Multi Audio");
     if (langParts.length === 0) langParts.push("English");
@@ -393,9 +396,42 @@ function getStreams(tmdbId, mediaType, season, episode) {
     })
     .then(function() {
         console.log("[a111477] total enriched: " + out.length);
-        var sorted = sortByQuality(dedupByUrl(out));
-        console.log("[a111477] after sort: " + sorted.length);
-        return sorted;
+
+        // ═════════════════════════════════════════════════════════════════
+        // الترتيب: 4K (الأكبر→الأصغر)، ثم 1080P (الأكبر→الأصغر)
+        // ═════════════════════════════════════════════════════════════════
+        var filtered = dedupByUrl(out);
+
+        filtered.sort(function(a, b) {
+            var qa = String(a.quality || "").toUpperCase();
+            var qb = String(b.quality || "").toUpperCase();
+
+            // 4K أولاً
+            var aIs4K = (qa === "4K" || qa === "2160P");
+            var bIs4K = (qb === "4K" || qb === "2160P");
+            if (aIs4K && !bIs4K) return -1;
+            if (!aIs4K && bIs4K) return 1;
+
+            // 1080P ثانياً
+            var aIs1080 = (qa === "1080P");
+            var bIs1080 = (qb === "1080P");
+            if (aIs1080 && !bIs1080) return -1;
+            if (!aIs1080 && bIs1080) return 1;
+
+            // داخل نفس الجودة: الأكبر حجماً أولاً
+            return parseSize(b._sizeRaw) - parseSize(a._sizeRaw);
+        });
+
+        // إضافة sortTag بأسلوب 2Peckle (نفس النطاق 10)
+        for (var t = 0; t < filtered.length; t++) {
+            var q = String(filtered[t].quality || "").toUpperCase();
+            var score = (q === "4K" || q === "2160P") ? 2 : (q === "1080P" ? 1 : 0);
+            var sortTag = getInvertedSortTag(score, 10);
+            filtered[t].name = sortTag + filtered[t].title;
+        }
+
+        console.log("[a111477] after sort: " + filtered.length);
+        return filtered;
     })
     .catch(function(e) {
         console.log("[a111477] FATAL: " + e.message);
