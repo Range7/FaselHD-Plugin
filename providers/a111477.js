@@ -31,7 +31,7 @@ function base64UrlEncode(input) {
     return base64Encode(input).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
-// ── TMDB Metadata Resolution (FIXED) ────────────────────────────────────────
+// ── TMDB Metadata Resolution ────────────────────────────────────────────────
 function resolveMeta(tmdbId, mediaType) {
     var kind = mediaType === "tv" ? "tv" : "movie";
     var ck = kind + ":" + tmdbId;
@@ -68,7 +68,7 @@ function resolveMeta(tmdbId, mediaType) {
     });
 }
 
-// ── Dedup & Sort ─────────────────────────────────────────────────────────────
+// ── Dedup ───────────────────────────────────────────────────────────────────
 function dedupByUrl(streams) {
     var seen = {};
     var out = [];
@@ -79,14 +79,6 @@ function dedupByUrl(streams) {
         out.push(s);
     }
     return out;
-}
-
-var QUALITY_RANK = { "4K": 5, "2160P": 5, "1080P": 4, "720P": 3, "480P": 2, "CAM": 1 };
-
-function sortByQuality(streams) {
-    return streams.slice().sort(function(a, b) {
-        return (QUALITY_RANK[b.quality] || 0) - (QUALITY_RANK[a.quality] || 0);
-    });
 }
 
 // ── Config Token Builder ────────────────────────────────────────────────────
@@ -202,7 +194,8 @@ function enrichStream(it, meta) {
     var rawLines = rawTitle.split("\n");
     var line1 = rawLines[0] || "";
     var line2 = rawLines[1] || "";
-    var fullText = line1 + " " + line2;
+    var fullText = line1 + " " + line");
+2;
 
     var quality = extractQualityLabel(fullText + " " + name);
     var qualityUp = quality.toUpperCase();
@@ -213,8 +206,7 @@ function enrichStream(it, meta) {
 
     var langParts = [];
     if (/\b(?:english|eng)\b/.test(combined)) langParts.push("English");
-    if (/\bhindi\b/.test(combined)) langParts.push("Hindi");
-    if (/\btamil\b/.test(combined)) langParts.push("Tamil");
+    if (/\bhindi\b/.test(combined)) langParts.push("Hindi    if (/\btamil\b/.test(combined)) langParts.push("Tamil");
     if (/\btelugu\b/.test(combined)) langParts.push("Telugu");
     if (/\barabic\b/.test(combined)) langParts.push("Arabic");
     if (/\bspanish\b/.test(combined)) langParts.push("Spanish");
@@ -373,13 +365,38 @@ function getStreams(tmdbId, mediaType, season, episode) {
     .then(function() {
         console.log("[a111477] total enriched: " + out.length);
 
-        // ترتيب حسب الجودة ثم الحجم
+        // ═════════════════════════════════════════════════════════════════
+        // الترتيب المطلوب:
+        //   1) 4K من الأكبر حجماً إلى الأصغر
+        //   2) 1080p من الأكبر حجماً إلى الأصغر
+        //   3) باقي الجودات (720p, 480p...) من الأكبر إلى الأصغر
+        // ═════════════════════════════════════════════════════════════════
         out.sort(function(a, b) {
-            var qa = QUALITY_RANK[a.quality] || 0;
-            var qb = QUALITY_RANK[b.quality] || 0;
-            if (qa !== qb) return qb - qa;
+            var qa = String(a.quality || "").toUpperCase();
+            var qb = String(b.quality || "").toUpperCase();
+
+            // ترتيب الجودة: 4K أولاً، ثم 1080P، ثم الباقي
+            function rank(q) {
+                if (q === "4K" || q === "2160P") return 3;
+                if (q === "1080P") return 2;
+                if (q === "720P") return 1;
+                return 0;
+            }
+
+            var ra = rank(qa);
+            var rb = rank(qb);
+
+            // الجودة الأعلى أولاً
+            if (ra !== rb) return rb - ra;
+
+            // داخل نفس الجودة: الحجم الأكبر أولاً
             return parseSize(b._sizeRaw) - parseSize(a._sizeRaw);
         });
+
+        // طباعة الترتيب النهائي للتشخيص
+        for (var d = 0; d < out.length; d++) {
+            console.log("[a111477] #" + (d + 1) + " " + out[d].quality + " " + out[d]._sizeRaw);
+        }
 
         return dedupByUrl(out);
     })
