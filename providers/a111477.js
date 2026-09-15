@@ -7,7 +7,7 @@
 // INLINE LIBRARIES (self-contained, no external requires)
 // ═════════════════════════════════════════════════════════════════════════════
 
-var TMDB_API_KEY = "b3556f3b206e16f82df4d1f6fd4545e6";
+var TMDB_API_KEY = "1c29a5198ee1854bd5eb45dbe8d17d92";
 var TMDB_DIRECT = "https://api.themoviedb.org/3";
 var TMDB_PROXY = "https://db.speedracelight.com/3";
 var UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
