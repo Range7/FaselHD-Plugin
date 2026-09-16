@@ -1,23 +1,25 @@
 /**
  * Krmizi / Qrmzi provider for Nuvio — STRICT 1080p ONLY Edition
- * Version: 1.1.1
+ * Version: 1.2.0
  *
  * Based on renoomon's krmizi provider, modified to return ONLY 1080p streams.
  * All non-1080p qualities are filtered out at every stage.
  *
  * v1.1.0: Fixed multi-season episode numbering.
- * v1.1.1: Fixed resolveAnaPlayer rejecting non-season-1 episodes
- *          when no explicit S#E# info exists in the player page.
- *         Qrmzi uses continuous numbering across seasons (S1E1=1..S1E18=18, S2E1=19...).
- *         When Nuvio sends season>1, we compute the site episode number and search for it.
+ * v1.1.1: Fixed resolveAnaPlayer rejecting non-season-1 episodes.
+ * v1.2.0: Fixed episode detection for seasons 2+ when the series page HTML
+ *          contains only the first batch of episodes. Broadened the episode
+ *          selector to catch all /episode/ links, added URL derivation as a
+ *          fallback, and made EPISODES_PER_SEASON dynamic via TMDB API.
  */
 
 "use strict";
 
 var cheerio = require("cheerio-without-node-native");
 
-var VERSION = "1.1.1";
+var VERSION = "1.2.0";
 var TMDB_BASE = "https://www.themoviedb.org";
+var TMDB_API = "https://api.themoviedb.org/3";
 var SITE_BASES = [
   "https://www.qrmzi.tv",
   "https://krmizi.onl",
@@ -26,9 +28,10 @@ var SITE_BASES = [
 var UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 var MAX_SERIES_PROBES = 6;
 var MAX_SERVERS = 8;
+var EPISODES_PER_SEASON_DEFAULT = 18;
 
-/** Episodes in season 1 on Qrmzi — used to compute continuous episode numbers for later seasons. */
-var EPISODES_PER_SEASON = 18;
+/** Computed cumulative episode count of seasons before the requested one. */
+var _cumulativeEpisodeOffset = 0;
 
 function log(key, value) {
   var suffix = value === undefined || value === null || value === "" ? "" : " " + String(value);
@@ -232,23 +235,53 @@ function fieldMatchScore(field, titles) {
   return best;
 }
 
+/**
+ * Extract the episode number from any text (anchor label, URL, title).
+ *
+ * v1.2.0: added URL-based patterns to catch anchors whose visible text
+ * doesn't include a number, only the URL does (e.g. /episode/abi-19/).
+ */
 function episodeNumber(value) {
   var text = decodeHtml(value);
   var match = text.match(/(?:الحلقة|الحلقه|حلقة|حلقه)\s*[:\-]?\s*(\d{1,4})/i);
   if (!match) match = text.match(/\bS\d{1,2}E(\d{1,4})\b/i);
   if (!match) match = text.match(/\bep(?:isode)?[\s._-]*(\d{1,4})\b/i);
   if (!match) match = text.match(/[-_\/]e(\d{1,4})(?:[\/?._-]|$)/i);
+  /* NEW: /episode/slug-19/ or /episode/slug_19 or /episode/19 */
+  if (!match && /\/episode\//i.test(text)) {
+    match = text.match(/\/episode\/[^\/?#\s]*-?(\d{1,4})(?:[\/?#._-]|$)/i);
+  }
+  /* NEW: last-resort trailing number on a /episode/ URL */
+  if (!match && /\/episode\//i.test(text)) {
+    match = text.match(/[-_\/](\d{1,4})(?:[\/?#._-]|$)/);
+  }
   return match ? parseInt(match[1], 10) : NaN;
 }
 
 /**
  * Compute the episode number as it appears on Qrmzi.
- * Qrmzi uses continuous numbering across seasons (no season separators).
- * e.g. S1 has 18 episodes, so S2E1 = episode 19 on the site.
+ *
+ * v1.2.0: uses a module-level cumulative offset computed from TMDB season data
+ * (with EPISODES_PER_SEASON_DEFAULT as fallback) instead of the hardcoded 18.
  */
 function siteEpisodeNumber(wantedSeason, wantedEpisode) {
   if (wantedSeason <= 1) return wantedEpisode;
-  return (wantedSeason - 1) * EPISODES_PER_SEASON + wantedEpisode;
+  var offset = _cumulativeEpisodeOffset > 0
+    ? _cumulativeEpisodeOffset
+    : (wantedSeason - 1) * EPISODES_PER_SEASON_DEFAULT;
+  return offset + wantedEpisode;
+}
+
+/**
+ * NEW: derive a target episode URL from an existing sample episode URL.
+ * e.g. /episode/abi-20/ -> /episode/abi-19/
+ */
+function deriveEpisodeUrlFromSample(sampleUrl, wantedEp) {
+  var m = sampleUrl.match(/^(.*\/episode\/[^\/?#]*?)(\d{1,4})([\/?#].*)?$/);
+  if (m) return m[1] + wantedEp + (m[3] || "");
+  m = sampleUrl.match(/^(.*\/episode\/)(\d{1,4})([\/?#].*)?$/);
+  if (m) return m[1] + wantedEp + (m[3] || "");
+  return "";
 }
 
 function explicitSeasonEpisode(value) {
@@ -257,10 +290,6 @@ function explicitSeasonEpisode(value) {
   return match ? { season: parseInt(match[1], 10), episode: parseInt(match[2], 10) } : null;
 }
 
-/**
- * Extract season number from free text (e.g. series title, URL).
- * e.g. "الموسم الثاني" → 2, "season 2" → 2, "S2" → 2
- */
 function seasonFromText(text) {
   var value = String(text || "");
   var match = value.match(/الموسم\s+(الأول|الاول|الثاني|الثالث|الرابع|الخامس|السادس|السابع|الثامن|التاسع|العاشر)/i);
@@ -343,6 +372,58 @@ function getTmdbMetadata(tmdbId) {
     }
 
     return { titles: titles, year: year };
+  });
+}
+
+/**
+ * NEW: read TMDB API key from Nuvio injection (no embedded key).
+ */
+function getTmdbKey() {
+  var k = "";
+  try { if (typeof TMDB_API_KEY !== "undefined" && TMDB_API_KEY) k = TMDB_API_KEY; } catch (e) {}
+  if (!k) { try { if (typeof globalThis !== "undefined" && globalThis.TMDB_API_KEY) k = globalThis.TMDB_API_KEY; } catch (e) {} }
+  if (!k) { try { if (typeof global !== "undefined" && global.TMDB_API_KEY) k = global.TMDB_API_KEY; } catch (e) {} }
+  return String(k || "");
+}
+
+/**
+ * NEW: fetch episode_count for a season from TMDB API.
+ */
+function fetchSeasonEpisodeCount(tmdbId, seasonNumber) {
+  var key = getTmdbKey();
+  if (!key) return Promise.resolve(NaN);
+  var url = TMDB_API + "/tv/" + encodeURIComponent(tmdbId) + "/season/" + seasonNumber + "?api_key=" + key;
+  return fetch(url, { headers: { "User-Agent": UA, "Accept": "application/json" } })
+    .then(function (r) {
+      if (!r || !r.ok) return NaN;
+      return r.json().then(function (d) {
+        return (d && typeof d.episode_count === "number" && d.episode_count > 0) ? d.episode_count : NaN;
+      });
+    })
+    .catch(function () { return NaN; });
+}
+
+/**
+ * NEW: sum episode counts from seasons 1..wantedSeason-1.
+ * Falls back to EPISODES_PER_SEASON_DEFAULT on any failure.
+ */
+function computeCumulativeEpisodes(tmdbId, wantedSeason) {
+  if (wantedSeason <= 1) return Promise.resolve(0);
+  var jobs = [];
+  for (var s = 1; s < wantedSeason; s++) {
+    jobs.push(fetchSeasonEpisodeCount(tmdbId, s));
+  }
+  return Promise.all(jobs).then(function (counts) {
+    var total = 0;
+    for (var i = 0; i < counts.length; i++) {
+      if (isNaN(counts[i])) {
+        var fallback = (wantedSeason - 1) * EPISODES_PER_SEASON_DEFAULT;
+        log("cumulative_episodes", "fallback=" + fallback);
+        return fallback;
+      }
+      total += counts[i];
+    }
+    return total;
   });
 }
 
@@ -476,27 +557,33 @@ function resolveSeries(metadata) {
 /**
  * Find the exact episode on the series page.
  *
- * v1.1.0 — Multi-season fix:
- * Qrmzi numbers episodes continuously across seasons (S1E1=1 … S1E18=18, S2E1=19 …).
- * When Nuvio asks for season>1, we compute the site episode number and search for it.
- * We try BOTH the site number (primary) and the raw episode number (fallback).
+ * v1.2.0 — Fallback for missing episodes:
+ * The series page HTML may only contain the first batch of episodes (e.g. 18).
+ * We now scan ALL /episode/ anchors (broadened selector) and, if the target
+ * episode still isn't found, derive its URL from any sample episode URL and
+ * let verifyEpisodePage confirm it.
  */
 function findExactEpisode(series, wantedSeason, wantedEpisode) {
   var $ = cheerio.load(series.html);
   var matches = [];
   var seen = {};
 
-  /* Episode numbers to try, in priority order. */
   var siteEp = siteEpisodeNumber(wantedSeason, wantedEpisode);
   var candidates = [];
   if (siteEp !== wantedEpisode) candidates.push(siteEp);
   candidates.push(wantedEpisode);
+  /* Nearby safety net (e.g. site might be off-by-one on some series) */
+  if (siteEp !== wantedEpisode) {
+    if (candidates.indexOf(siteEp + 1) === -1) candidates.push(siteEp + 1);
+    if (siteEp > 1 && candidates.indexOf(siteEp - 1) === -1) candidates.push(siteEp - 1);
+  }
 
   log("episode_candidates", "candidates=" + candidates.join(",") +
       " (wanted=S" + wantedSeason + "E" + wantedEpisode +
       ", siteEp=" + siteEp + ")");
 
-  $('.sec-line article.postEp a[href*="/episode/"]').each(function (_, element) {
+  /* Broadened selector — any anchor pointing to /episode/ */
+  $('a[href*="/episode/"]').each(function (_, element) {
     var anchor = wrap($, element);
     var url = absUrl(anchor.attr("href"), series.url);
     if (!url || seen[urlKey(url)]) return;
@@ -510,7 +597,6 @@ function findExactEpisode(series, wantedSeason, wantedEpisode) {
     var epNum = episodeNumber(identity);
     if (candidates.indexOf(epNum) === -1) return;
 
-    /* Explicit S#E# must match the wanted season. */
     var explicit = explicitSeasonEpisode(identity);
     if (explicit && explicit.season !== wantedSeason) return;
 
@@ -518,59 +604,82 @@ function findExactEpisode(series, wantedSeason, wantedEpisode) {
     matches.push({ url: url, identity: identity, explicit: explicit, epNum: epNum });
   });
 
-  if (!matches.length) {
-    logFailure("episode_not_found", "S" + wantedSeason + "E" + wantedEpisode +
-               " (site candidates: " + candidates.join(",") + ")");
-    return null;
-  }
+  log("episode_matches", "count=" + matches.length);
 
-  /* ── Priority 1: exact match on the site episode number ── */
-  var siteMatches = [];
-  for (var i = 0; i < matches.length; i++) {
-    if (matches[i].epNum === siteEp) siteMatches.push(matches[i]);
-  }
-  if (siteMatches.length === 1) {
-    log("episode_match", "site_ep=" + siteEp);
-    return siteMatches[0];
-  }
+  if (matches.length) {
+    /* Priority 1: exact match on the site episode number */
+    var siteMatches = [];
+    for (var i = 0; i < matches.length; i++) {
+      if (matches[i].epNum === siteEp) siteMatches.push(matches[i]);
+    }
+    if (siteMatches.length === 1) {
+      log("episode_match", "site_ep=" + siteEp);
+      return siteMatches[0];
+    }
 
-  /* ── Priority 2: exact match on the raw episode number ── */
-  var rawMatches = [];
-  for (var j = 0; j < matches.length; j++) {
-    if (matches[j].epNum === wantedEpisode) rawMatches.push(matches[j]);
-  }
-  if (rawMatches.length === 1) {
-    log("episode_match", "raw_ep=" + wantedEpisode);
-    return rawMatches[0];
-  }
+    /* Priority 2: exact match on the raw episode number */
+    var rawMatches = [];
+    for (var j = 0; j < matches.length; j++) {
+      if (matches[j].epNum === wantedEpisode) rawMatches.push(matches[j]);
+    }
+    if (rawMatches.length === 1) {
+      log("episode_match", "raw_ep=" + wantedEpisode);
+      return rawMatches[0];
+    }
 
-  /* ── Priority 3: disambiguate via explicit S#E# ── */
-  if (matches.length > 1) {
-    var explicitMatches = [];
-    for (var k = 0; k < matches.length; k++) {
-      if (matches[k].explicit && matches[k].explicit.season === wantedSeason &&
-          matches[k].explicit.episode === wantedEpisode) {
-        explicitMatches.push(matches[k]);
+    /* Priority 3: disambiguate via explicit S#E# */
+    if (matches.length > 1) {
+      var explicitMatches = [];
+      for (var k = 0; k < matches.length; k++) {
+        if (matches[k].explicit && matches[k].explicit.season === wantedSeason &&
+            matches[k].explicit.episode === wantedEpisode) {
+          explicitMatches.push(matches[k]);
+        }
+      }
+      if (explicitMatches.length === 1) return explicitMatches[0];
+    }
+
+    /* Priority 4: single match fallback */
+    if (matches.length === 1) {
+      var single = matches[0];
+      if (!single.explicit && wantedSeason > 1) {
+        var seriesSeason = seasonFromText(series.heading + " " + series.url);
+        if (!isNaN(seriesSeason) && seriesSeason !== wantedSeason) {
+          logFailure("season_mismatch_single", "seriesSeason=" + seriesSeason);
+          /* fall through to URL derivation */
+        } else {
+          return single;
+        }
+      } else {
+        return single;
       }
     }
-    if (explicitMatches.length === 1) return explicitMatches[0];
   }
 
-  /* ── Priority 4: single match fallback ── */
-  if (matches.length === 1) {
-    var single = matches[0];
-    /* If the single match has no explicit season info, try to infer from series context. */
-    if (!single.explicit && wantedSeason > 1) {
-      var seriesSeason = seasonFromText(series.heading + " " + series.url);
-      if (!isNaN(seriesSeason) && seriesSeason !== wantedSeason) {
-        logFailure("season_mismatch_single", "seriesSeason=" + seriesSeason);
-        return null;
-      }
+  /* FALLBACK: derive the target URL from any sample episode URL on the page. */
+  var sampleUrl = "";
+  $('a[href*="/episode/"]').each(function (_, el) {
+    if (sampleUrl) return false;
+    var h = $(el).attr("href") || "";
+    var u = absUrl(h, series.url);
+    if (u && /\/episode\//i.test(u)) sampleUrl = u;
+  });
+
+  if (sampleUrl) {
+    var derivedUrl = deriveEpisodeUrlFromSample(sampleUrl, siteEp);
+    if (derivedUrl && derivedUrl !== sampleUrl) {
+      log("derived_url", "sample=" + sampleUrl + " -> " + derivedUrl);
+      return {
+        url: derivedUrl,
+        identity: "derived " + derivedUrl,
+        explicit: null,
+        epNum: siteEp
+      };
     }
-    return single;
   }
 
-  logFailure("episode_ambiguous", "matches=" + matches.length);
+  logFailure("episode_not_found", "S" + wantedSeason + "E" + wantedEpisode +
+             " (site candidates: " + candidates.join(",") + ")");
   return null;
 }
 
@@ -582,14 +691,6 @@ function directMedia(url) {
   return /\.(?:m3u8|mp4)(?:[?#]|$)/i.test(String(url || ""));
 }
 
-/**
- * Verify the episode page and extract the player URL.
- *
- * v1.1.0 — Multi-season fix:
- * When wantedSeason > 1 and the site uses continuous numbering,
- * the episode page will show the site episode number (e.g. 19) not the
- * raw episode number (e.g. 1). We accept either.
- */
 function verifyEpisodePage(series, episodeCandidate, wantedSeason, wantedEpisode) {
   var siteEp = siteEpisodeNumber(wantedSeason, wantedEpisode);
 
@@ -602,7 +703,6 @@ function verifyEpisodePage(series, episodeCandidate, wantedSeason, wantedEpisode
     ].join(" ");
     var headingEpNum = episodeNumber(heading);
 
-    /* Accept both the raw episode number and the computed site episode number. */
     if (headingEpNum !== wantedEpisode && headingEpNum !== siteEp) {
       logFailure("episode_identity_mismatch", "number: heading=" + headingEpNum +
                  " wanted=" + wantedEpisode + " site=" + siteEp);
@@ -627,13 +727,7 @@ function verifyEpisodePage(series, episodeCandidate, wantedSeason, wantedEpisode
       return null;
     }
 
-    /*
-     * Season verification.
-     * If explicit S#E# info exists in the player URL or heading, it must match.
-     * Otherwise, check for season hints in heading / series link / series page.
-     * If no season info found anywhere, allow it (the episode page itself is authority).
-     */
-    var explicit = explicitSeasonEpisode(playerUrl + " " + heading);
+    var explicit =": explicitSeasonEpisode(playerUrl + " " + heading);
     if (explicit) {
       if (explicit.season !== wantedSeason) {
         logFailure("player_identity_mismatch", "S" + explicit.season + "E" + explicit.episode);
@@ -661,11 +755,6 @@ function verifyEpisodePage(series, episodeCandidate, wantedSeason, wantedEpisode
         logFailure("player_identity_mismatch", "seriesPage_season=" + seriesPageSeason);
         return null;
       }
-      /*
-       * No season info found anywhere — allow it.
-       * The episode page itself is the authority, and we already verified
-       * the episode number matches (either raw or computed site number).
-       */
     }
 
     return {
@@ -710,7 +799,7 @@ function qualityFromResolution(widthValue, heightValue) {
 }
 
 function qualityRank(quality) {
-  var ranks = { "4K": 7000, "2160p": 7000, "1080p": 6000, "720p": 5000, "576p": 4000, "480p": 3000, "360p": 2000, "320p": 1000 };
+  var ranks = { "4K 7000, "2160p": 7000, "1080p": 6000, "720p": 5000, "576p": 4000, "480p": 3000, "360p": 2000, "320p": 1000 };
   return ranks[quality] || 0;
 }
 
@@ -763,14 +852,6 @@ function parseHlsMaster(text, masterUrl) {
   return variants;
 }
 
-/*
- * The CDN family used by AnaPlayer publishes its available rendition set in
- * the master URL itself, for example: video_,l,n,h,x,.urlset/master.m3u8.
- * Expanding this deterministic form avoids losing qualities when Nuvio can
- * play the media but its sandbox cannot read the master playlist response.
- *
- * STRICT 1080p ONLY: we only keep the 'x' variant (1080p).
- */
 function variantsFromEncodedMaster(masterUrl) {
   var value = String(masterUrl || "");
   var match = value.match(/^(https?:\/\/[^?#]+\/)([^\/?#]+)_((?:,[a-z0-9]+)+),?\.urlset\/master\.m3u8(\?[^#]*)?$/i);
@@ -782,7 +863,6 @@ function variantsFromEncodedMaster(masterUrl) {
   var seen = {};
   for (var i = 0; i < codes.length; i++) {
     var code = String(codes[i] || "").toLowerCase();
-    // STRICT 1080p ONLY — skip everything except 'x'
     if (code !== "x") continue;
     if (!qualities[code] || seen[code]) continue;
     seen[code] = true;
@@ -816,7 +896,6 @@ function unescapePackedString(value) {
     .replace(/\\t/g, "\t");
 }
 
-/* Dean Edwards P.A.C.K.E.R. decoding without eval or executing page code. */
 function unpackDeanEdwards(source) {
   var text = String(source || "");
   var pattern = /eval\(function\(p,a,c,k,e,d\)\{[\s\S]*?\}\('((?:\\.|[^'])*)',(\d+),(\d+),'((?:\\.|[^'])*)'\.split\('\|'\)\)\)/g;
@@ -915,17 +994,11 @@ function collectAnaServers(html, playerUrl) {
   return servers.slice(0, MAX_SERVERS);
 }
 
-/*
- * STRICT 1080p ONLY:
- * We filter here so non-1080p streams never enter the result array.
- * For HLS masters we still fetch to parse variants, but only 1080p variants are kept.
- */
 function addMediaEntry(entry, referer, serverName, streams, seenStreams) {
   var url = entry && entry.url ? entry.url : "";
   if (!url || seenStreams[url]) return Promise.resolve();
   var declaredQuality = entry.quality || qualityFromText(serverName) || qualityFromText(url);
 
-  // STRICT 1080p ONLY — skip direct MP4/M3U8 that isn't 1080p
   if (declaredQuality && declaredQuality !== "1080p") {
     return Promise.resolve();
   }
@@ -971,7 +1044,6 @@ function addMediaEntry(entry, referer, serverName, streams, seenStreams) {
     }
 
     for (var i = 0; i < variants.length; i++) {
-      // STRICT 1080p ONLY — skip non-1080p HLS variants
       if (variants[i].quality !== "1080p" || seenStreams[variants[i].url]) continue;
       seenStreams[variants[i].url] = true;
       streams.push(streamObject(variants[i].url, referer, variants[i].quality, serverName));
@@ -993,7 +1065,6 @@ function resolveDailymotion(url, referer, serverName, streams, seenStreams) {
         for (var j = 0; j < list.length; j++) {
           if (!list[j] || !list[j].url) continue;
           var q = qualityFromText(keys[i]);
-          // STRICT 1080p ONLY
           if (q !== "1080p") continue;
           jobs.push(addMediaEntry(
             { url: list[j].url, quality: q },
@@ -1062,12 +1133,6 @@ function resolveAnaPlayer(playerUrl, episodeUrl, wantedSeason, wantedEpisode) {
         return [];
       }
     }
-    /*
-     * No explicit S#E# info found in the player page.
-     * v1.1.0: We already verified the episode number in verifyEpisodePage().
-     * The player URL came from that verified episode page, so we trust it.
-     * Do NOT reject here — allow the streams to be resolved.
-     */
 
     var servers = collectAnaServers(player.html, player.url);
     if (!servers.length) {
@@ -1170,62 +1235,65 @@ function getStreams(tmdbId, mediaType, season, episode) {
 
   log("tmdb_id", id);
   log("request", "S" + wantedSeason + "E" + wantedEpisode);
-  log("site_episode", siteEpisodeNumber(wantedSeason, wantedEpisode));
 
-  var context = { metadata: null, series: null, episodeCandidate: null, verifiedEpisode: null };
+  /* NEW: compute cumulative episode offset from TMDB before anything else. */
+  return computeCumulativeEpisodes(id, wantedSeason).then(function (offset) {
+    _cumulativeEpisodeOffset = offset;
+    log("site_episode", siteEpisodeNumber(wantedSeason, wantedEpisode) +
+        " (offset=" + offset + ")");
 
-  return getTmdbMetadata(id)
-    .then(function (metadata) {
-      context.metadata = metadata;
-      log("titles", metadata.titles.join(" | "));
-      if (!metadata.titles.length) {
-        logFailure("tmdb_metadata_not_found");
-        return null;
-      }
-      return resolveSeries(metadata);
-    })
-    .then(function (series) {
-      if (!series) {
-        logFailure("series_not_found");
-        return null;
-      }
-      context.series = series;
-      log("matched_series", series.url);
-      context.episodeCandidate = findExactEpisode(series, wantedSeason, wantedEpisode);
-      if (!context.episodeCandidate) {
-        logFailure("episode_not_found", "S" + wantedSeason + "E" + wantedEpisode);
-        return null;
-      }
-      return verifyEpisodePage(series, context.episodeCandidate, wantedSeason, wantedEpisode);
-    })
-    .then(function (verifiedEpisode) {
-      if (!verifiedEpisode) return [];
-      context.verifiedEpisode = verifiedEpisode;
-      log("episode_url", verifiedEpisode.episodeUrl);
-      log("player_url", verifiedEpisode.playerUrl);
-      return resolvePlayer(verifiedEpisode);
-    })
-    .then(function (streams) {
-      // ================================================================
-      // STRICT 1080p ONLY — Final safety filter
-      // ================================================================
-      var filtered = (streams || []).filter(function (s) {
-        return (s.quality || "") === "1080p";
+    var context = { metadata: null, series: null, episodeCandidate: null, verifiedEpisode: null };
+
+    return getTmdbMetadata(id)
+      .then(function (metadata) {
+        context.metadata = metadata;
+        log("titles", metadata.titles.join(" | "));
+        if (!metadata.titles.length) {
+          logFailure("tmdb_metadata_not_found");
+          return null;
+        }
+        return resolveSeries(metadata);
+      })
+      .then(function (series) {
+        if (!series) {
+          logFailure("series_not_found");
+          return null;
+        }
+        context.series = series;
+        log("matched_series", series.url);
+        context.episodeCandidate = findExactEpisode(series, wantedSeason, wantedEpisode);
+        if (!context.episodeCandidate) {
+          logFailure("episode_not_found", "S" + wantedSeason + "E" + wantedEpisode);
+          return null;
+        }
+        return verifyEpisodePage(series, context.episodeCandidate, wantedSeason, wantedEpisode);
+      })
+      .then(function (verifiedEpisode) {
+        if (!verifiedEpisode) return [];
+        context.verifiedEpisode = verifiedEpisode;
+        log("episode_url", verifiedEpisode.episodeUrl);
+        log("player_url", verifiedEpisode.playerUrl);
+        return resolvePlayer(verifiedEpisode);
+      })
+      .then(function (streams) {
+        var filtered = (streams || []).filter(function (s) {
+          return (s.quality || "") === "1080p";
+        });
+        var sorted = sortStreams(filtered);
+        if (!sorted.length) logFailure("no_1080p_sources");
+        for (var i = 0; i < sorted.length; i++) {
+          log("quality", sorted[i].quality || "unannounced");
+        }
+        log("streams_found", sorted.length);
+        return sorted;
+      })
+      .catch(function (error) {
+        var message = errorMessage(error);
+        if (message.indexOf("cloudflare_challenge") === 0) logFailure("cloudflare_challenge");
+        else logFailure("fatal", message);
+        return [];
       });
-      var sorted = sortStreams(filtered);
-      if (!sorted.length) logFailure("no_1080p_sources");
-      for (var i = 0; i < sorted.length; i++) {
-        log("quality", sorted[i].quality || "unannounced");
-      }
-      log("streams_found", sorted.length);
-      return sorted;
-    })
-    .catch(function (error) {
-      var message = errorMessage(error);
-      if (message.indexOf("cloudflare_challenge") === 0) logFailure("cloudflare_challenge");
-      else logFailure("fatal", message);
-      return [];
-    });
+  });
 }
 
 module.exports = { getStreams: getStreams };
