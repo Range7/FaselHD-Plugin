@@ -1,8 +1,7 @@
 // Cinemana Scraper for Nuvio Local Scrapers
-// FAST: parallel TMDB, parallel SUB/DUB search, parallel SUB/DUB stream fetch
-// Multi-quality: 4K فوق، 1080p تحته — ترتيب مضمون
+// FAST: parallel TMDB, reduced queries, parallel SUB/DUB search
+// Multi-language | 1080p only | Verified Dub/Sub
 // React Native compatible (Hermes-safe, no async/await)
-// TMDB key: from Nuvio global only. Subtitles: translationFiles, same as code 2.
 
 var __async = (__this, __arguments, generator) => {
   return new Promise((resolve, reject) => {
@@ -17,7 +16,11 @@ var CINEMANA_BASE = "https://cinemana.shabakaty.com/api/android";
 var CINEMANA_ROOT = "https://cinemana.shabakaty.com";
 var TMDB_BASE = "https://api.themoviedb.org/3";
 var UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36";
-var FETCH_TIMEOUT = 8e3;
+
+// ⚡ Reduced timeouts for snappier responses
+var FETCH_TIMEOUT = 5000;      // was 8000
+var FAST_TIMEOUT = 3000;       // for optional calls
+var QUICK_TIMEOUT = 6000;      // for search calls
 var HEADERS = { Referer: CINEMANA_ROOT + "/", Origin: CINEMANA_ROOT };
 
 function safeFetch(url, options, timeout) {
@@ -44,32 +47,9 @@ function removeDubWords(str) {
 }
 
 function cleanUrl(url) { return url ? url.replace(/\\/g, "") : ""; }
+function is1080p(q) { return q ? q.toString().toLowerCase().indexOf("1080") !== -1 : false; }
 function isDubbedTitle(t) { if (!t) return false; t = t.toLowerCase(); return t.indexOf("مدبلج") !== -1 || t.indexOf("dubbed") !== -1 || t.indexOf("dub") !== -1 || t.indexOf("مدبلجة") !== -1; }
 function safeMedia(url) { return /^https:\/\/([a-z0-9-]+\.)*shabakaty\.(com|cc)\//i.test(String(url || "")); }
-
-// ─── تصنيف الجودة: يشتغل على "2160p" و "4K" و "UHD" و "1080p" و "FHD" ───
-function qualityRank(qName) {
-  if (qName === undefined || qName === null || qName === "") return 0;
-  var s = String(qName).toLowerCase().trim();
-  // حاول تلتقط الرقم أول (1080, 2160, 4320, 1440, 720...)
-  var m = s.match(/(\d{3,4})/);
-  if (m) {
-    var n = parseInt(m[1], 10);
-    if (n >= 2000) return 3;               // 4K: 2160p / 4320p
-    if (n >= 1000 && n < 2000) return 2;   // 1080p
-    return 0;                               // 720p وأقل — مرفوض
-  }
-  // ما فيه رقم — اعتمد على النص
-  if (s.indexOf("4k") !== -1 || s.indexOf("uhd") !== -1) return 3;
-  if (s.indexOf("1080") !== -1 || s.indexOf("fhd") !== -1 || s.indexOf("full hd") !== -1 || s.indexOf("fullhd") !== -1) return 2;
-  return 0;
-}
-function qualityLabel(qName) {
-  var r = qualityRank(qName);
-  if (r === 3) return "4K";
-  if (r === 2) return "1080p";
-  return String(qName || "Unknown");
-}
 
 function strictMatchScore(a, b) {
   var na = normalizeTitle(a), nb = normalizeTitle(b);
@@ -87,7 +67,7 @@ function strictMatchScore(a, b) {
   return ratio >= 0.9 ? Math.round(75 + ratio * 15) : Math.round(ratio * 70);
 }
 
-// ─── TMDB ──────────────────────────────────────────────
+// ─── TMDB: parallel main + translations (translations non-blocking) ───
 function getTMDBInfo(tmdbId, mediaType) {
   return __async(this, null, function* () {
     var key = typeof TMDB_API_KEY !== 'undefined' ? TMDB_API_KEY : '';
@@ -98,13 +78,14 @@ function getTMDBInfo(tmdbId, mediaType) {
     var urlTrans = TMDB_BASE + "/" + type + "/" + tmdbId + "/translations?api_key=" + key;
 
     try {
-      var [rMain, rTrans] = yield Promise.all([
-        safeFetch(urlMain),
-        safeFetch(urlTrans, null, 8e3)
-      ]);
+      // ⚡ Fire both in parallel; translations get a short timeout so it can't slow us down
+      var mainPromise = safeFetch(urlMain, null, FETCH_TIMEOUT);
+      var transPromise = safeFetch(urlTrans, null, FAST_TIMEOUT).catch(function () { return null; });
 
+      var rMain = yield mainPromise;
       if (!rMain.ok) { console.log("[Cinemana] TMDB main returned " + rMain.status); return null; }
       var d = yield rMain.json();
+
       var titleEn = d.title || d.name || "";
       var origTitle = d.original_title || d.original_name || titleEn;
       var origLang = d.original_language || "en";
@@ -116,31 +97,21 @@ function getTMDBInfo(tmdbId, mediaType) {
       if (titleEn) titles.push(titleEn);
       if (origTitle && origTitle !== titleEn) titles.push(origTitle);
 
-      if (rTrans.ok) {
-        var dTrans = yield rTrans.json();
-        var list = dTrans.translations || [];
-        for (var i = 0; i < list.length; i++) {
-          var t = list[i];
-          if (t && t.data) {
-            var tt = t.data.title || t.data.name || "";
-            if (tt && titles.indexOf(tt) === -1) titles.push(tt);
-          }
-        }
-      }
-
-      if (origLang === "ja" && titles.length < 3) {
-        try {
-          var rAlt = yield safeFetch(TMDB_BASE + "/" + type + "/" + tmdbId + "/alternative_titles?api_key=" + key, null, 6e3);
-          if (rAlt.ok) {
-            var dAlt = yield rAlt.json();
-            var alts = dAlt.results || dAlt.titles || [];
-            for (var i = 0; i < alts.length; i++) {
-              var a = alts[i].title || alts[i].name || "";
-              if (a && /[a-zA-Z]/.test(a) && titles.indexOf(a) === -1) titles.push(a);
+      // Try to merge translations quickly (parallel call already in-flight)
+      try {
+        var rTrans = yield transPromise;
+        if (rTrans && rTrans.ok) {
+          var dTrans = yield rTrans.json();
+          var list = dTrans.translations || [];
+          for (var i = 0; i < list.length; i++) {
+            var t = list[i];
+            if (t && t.data) {
+              var tt = t.data.title || t.data.name || "";
+              if (tt && titles.indexOf(tt) === -1) titles.push(tt);
             }
           }
-        } catch (e) {}
-      }
+        }
+      } catch (e) { /* translations optional — ignore */ }
 
       console.log("[Cinemana] TMDB titles (" + titles.length + "): " + titles.slice(0, 5).join(" | ") + (titles.length > 5 ? " ..." : ""));
       return { titles: titles, originalLanguage: origLang, year: year };
@@ -155,7 +126,7 @@ function getTMDBInfo(tmdbId, mediaType) {
 function searchCinemana(query, type) {
   return __async(this, null, function* () {
     try {
-      var r = yield safeFetch(CINEMANA_BASE + "/AdvancedSearch?videoTitle=" + encodeURIComponent(query) + "&type=" + type, null, 8e3);
+      var r = yield safeFetch(CINEMANA_BASE + "/AdvancedSearch?videoTitle=" + encodeURIComponent(query) + "&type=" + type, null, QUICK_TIMEOUT);
       if (!r.ok) return [];
       var d = yield r.json();
       return Array.isArray(d) ? d : [];
@@ -166,7 +137,7 @@ function searchCinemana(query, type) {
 function getTranscodedFiles(id) {
   return __async(this, null, function* () {
     try {
-      var r = yield safeFetch(CINEMANA_BASE + "/transcoddedFiles/id/" + id, null, 8e3);
+      var r = yield safeFetch(CINEMANA_BASE + "/transcoddedFiles/id/" + id, null, QUICK_TIMEOUT);
       if (!r.ok) return [];
       var d = yield r.json();
       return Array.isArray(d) ? d : [];
@@ -177,7 +148,7 @@ function getTranscodedFiles(id) {
 function getSeriesEpisodes(id) {
   return __async(this, null, function* () {
     try {
-      var r = yield safeFetch(CINEMANA_BASE + "/videoSeason/id/" + id, null, 8e3);
+      var r = yield safeFetch(CINEMANA_BASE + "/videoSeason/id/" + id, null, QUICK_TIMEOUT);
       if (!r.ok) return [];
       var d = yield r.json();
       return Array.isArray(d) ? d : [];
@@ -189,7 +160,7 @@ function getSeriesEpisodes(id) {
 function getTranslationFiles(id) {
   return __async(this, null, function* () {
     try {
-      var r = yield safeFetch(CINEMANA_BASE + "/translationFiles/id/" + id, null, 8e3);
+      var r = yield safeFetch(CINEMANA_BASE + "/translationFiles/id/" + id, null, FAST_TIMEOUT);
       if (!r.ok) return {};
       return yield r.json();
     } catch (e) { return {}; }
@@ -213,7 +184,7 @@ function buildSubtitles(data) {
   return subs;
 }
 
-// ─── Search & Score ────────────────────────────────────
+// ─── Search & Score ─────────────────────────────────────
 function searchAndScore(tmdbInfo, mediaType, requireDubbed) {
   return __async(this, null, function* () {
     var searchType = mediaType === "movie" ? "movie" : "series";
@@ -221,7 +192,8 @@ function searchAndScore(tmdbInfo, mediaType, requireDubbed) {
     var isAnime = tmdbInfo.originalLanguage === "ja";
 
     var queries = [];
-    for (var t = 0; t < Math.min(tmdbInfo.titles.length, 4); t++) {
+    // ⚡ Reduced from 4 → 3 titles to cut down search count
+    for (var t = 0; t < Math.min(tmdbInfo.titles.length, 3); t++) {
       var title = tmdbInfo.titles[t];
       if (!title) continue;
       if (queries.indexOf(title) === -1) queries.push(title);
@@ -294,9 +266,10 @@ function searchAndScore(tmdbInfo, mediaType, requireDubbed) {
   });
 }
 
-// ─── Get streams ───────────────────────────────────────
+// ─── Get streams ────────────────────────────────────────
 function getStreamsFromMatch(match, mediaType, season, episode) {
   return __async(this, null, function* () {
+    var streams = [];
     var label = match.isDubbed ? "Cinemana | مدبلج عربي" : "Cinemana | مترجم";
     var targetId = match.id;
 
@@ -313,56 +286,32 @@ function getStreamsFromMatch(match, mediaType, season, episode) {
       if (!targetId) return [];
     }
 
-    var [qualities, transData] = yield Promise.all([
-      getTranscodedFiles(targetId),
-      getTranslationFiles(targetId)
-    ]);
-    var subs = buildSubtitles(transData);
+    // ⚡ Skip translationFiles for dubbed streams (subtitles aren't attached to dubs)
+    var qualitiesPromise = getTranscodedFiles(targetId);
+    var transPromise = match.isDubbed ? Promise.resolve({}) : getTranslationFiles(targetId);
+    var [qualities, transData] = yield Promise.all([qualitiesPromise, transPromise]);
+    var subs = match.isDubbed ? [] : buildSubtitles(transData);
 
     var seen = {};
-    var candidates = [];
-    var qArr = Array.isArray(qualities) ? qualities : [];
-    for (var i = 0; i < qArr.length; i++) {
-      var q = qArr[i];
-      if (!q.videoUrl) continue;
-      // جرّب كل حقول الجودة المحتملة — أول حقل يعطي rank أعلى يفوز
-      var r1 = qualityRank(q.resolution);
-      var r2 = qualityRank(q.name);
-      var r3 = qualityRank(q.quality);
-      var rank = Math.max(r1, r2, r3);
-      if (rank === 0) continue;
-      var u = cleanUrl(q.videoUrl);
-      if (!u || seen[u]) continue;
-      seen[u] = true;
-      candidates.push({ url: u, rank: rank });
-    }
+    var uniqueQualities = (Array.isArray(qualities) ? qualities : []).filter(function (s) {
+      if (!s.videoUrl || seen[s.videoUrl]) return false;
+      seen[s.videoUrl] = true;
+      return true;
+    });
 
-    if (candidates.length === 0) return [];
-
-    // ترتيب: rank 3 (4K) قبل rank 2 (1080p)
-    candidates.sort(function(a, b) { return b.rank - a.rank; });
-
-    var streams = [];
-    for (var c = 0; c < candidates.length; c++) {
-      var cand = candidates[c];
-      var qLabel = cand.rank === 3 ? "4K" : "1080p";
-      var stream = {
-        name: label,
-        title: label + "\n" + qLabel,
-        url: cand.url,
-        quality: qLabel,
-        headers: HEADERS
-      };
+    for (var i = 0; i < uniqueQualities.length; i++) {
+      var q = uniqueQualities[i];
+      var qName = q.resolution || q.name || "";
+      if (!is1080p(qName)) continue;
+      var stream = { name: label, title: "1080p", url: cleanUrl(q.videoUrl), quality: qName, headers: HEADERS };
       if (!match.isDubbed && subs.length > 0) stream.subtitles = subs;
       streams.push(stream);
     }
-
-    console.log("[Cinemana] streams ready: " + streams.length + " (4K=" + candidates.filter(function(c){return c.rank===3;}).length + ", 1080p=" + candidates.filter(function(c){return c.rank===2;}).length + ")");
     return streams;
   });
 }
 
-// ─── Main ──────────────────────────────────────────────
+// ─── Main ───────────────────────────────────────────────
 function getStreams(tmdbId, mediaType, season, episode) {
   return __async(this, null, function* () {
     var t0 = Date.now();
@@ -384,10 +333,15 @@ function getStreams(tmdbId, mediaType, season, episode) {
         searchAndScore(tmdbInfo, mediaType, true)
       ]);
 
-      var jobs = [];
+      // ⚡ Build fetch tasks, verify DUB inline, and run SUB + DUB stream fetches in parallel
+      var tasks = [];
+      var taskLabels = [];
+
       if (subMatch) {
-        jobs.push(getStreamsFromMatch(subMatch, mediaType, season, episode));
+        tasks.push(getStreamsFromMatch(subMatch, mediaType, season, episode));
+        taskLabels.push("SUB");
       }
+
       if (dubMatch) {
         var cleanDub = removeDubWords(dubMatch.title);
         var verifyScore = 0;
@@ -396,30 +350,19 @@ function getStreams(tmdbId, mediaType, season, episode) {
         }
         console.log("[Cinemana] DUB verify: '" + cleanDub + "' -> " + verifyScore);
         if (verifyScore >= 70) {
-          jobs.push(getStreamsFromMatch(dubMatch, mediaType, season, episode));
+          tasks.push(getStreamsFromMatch(dubMatch, mediaType, season, episode));
+          taskLabels.push("DUB");
         } else {
           console.log("[Cinemana] DUB verify FAILED (need 70+, got " + verifyScore + ")");
         }
       }
 
-      if (jobs.length === 0) {
-        console.log("[Cinemana] === Done: 0 streams in " + (Date.now() - t0) + "ms ===");
-        return [];
-      }
-
-      var groups = yield Promise.all(jobs);
+      var results = yield Promise.all(tasks);
       var allStreams = [];
-      for (var g = 0; g < groups.length; g++) {
-        var arr = groups[g] || [];
-        for (var s = 0; s < arr.length; s++) allStreams.push(arr[s]);
+      for (var i = 0; i < results.length; i++) {
+        var arr = results[i] || [];
+        for (var j = 0; j < arr.length; j++) allStreams.push(arr[j]);
       }
-
-      // الترتيب النهائي: 4K فوق 1080p، ومهما كان المصدر (SUB أو DUB)
-      allStreams.sort(function(a, b) {
-        var ra = qualityRank(a.quality);
-        var rb = qualityRank(b.quality);
-        return rb - ra;
-      });
 
       console.log("[Cinemana] === Done: " + allStreams.length + " streams in " + (Date.now() - t0) + "ms ===");
       return allStreams;
