@@ -1,9 +1,11 @@
 /**
- * 4KHDHub Nuvio Provider
+ * 4KHDHub Nuvio Provider — v2
+ * - Fixed isHubUrl to catch 4khdhub.one internal download endpoints
+ * - Added raw HTML fallback scanner (data-attrs + JS-embedded URLs)
+ * - Added resolveDirect branch for 4khdhub.one internal endpoints
  * - Visible number prefix (01, 02, 03...) forces correct order
  * - 4K first (largest→smallest), then 1080p (largest→smallest)
- * - ALL 4K kept
- * - 1080p removes smallest ONLY if more than one
+ * - ALL 4K kept; 1080p removes smallest ONLY if more than one
  * - PixelDrain kept only if no alternative
  */
 
@@ -124,7 +126,7 @@ function getStreams(tmdbId, mediaType, season, episode) {
             var originalLang = item.original_language || "";
             var originCountry = item.origin_country || [];
             var isJapaneseAnime = isAnimation && (originalLang === "ja" || originCountry.indexOf("JP") !== -1);
-            
+
             if (isJapaneseAnime) {
                 console.log("[4khdhub] Japanese Anime detected, skipping: " + title);
                 return [];
@@ -153,7 +155,7 @@ function getStreams(tmdbId, mediaType, season, episode) {
 function scrape4KHDHub(title, year, type, season, episode, runtime, imdbId) {
     var cleanTitle = title.replace(/&/g, "and").replace(/[^a-zA-Z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
     var searchCacheKey = cleanTitle + "|" + year + "|" + type + "|" + season;
-    
+
     if (searchCache[searchCacheKey]) {
         console.log("[4khdhub] search cache hit: " + searchCache[searchCacheKey]);
         return fetchText(searchCache[searchCacheKey]).then(function(postHtml) {
@@ -162,28 +164,28 @@ function scrape4KHDHub(title, year, type, season, episode, runtime, imdbId) {
     }
 
     var strategies = [];
-    
+
     if (imdbId) {
         strategies.push({
             name: "imdb",
             url: BASE_URL + "/?s=" + encodeURIComponent(imdbId)
         });
     }
-    
+
     if (year) {
         strategies.push({
             name: "title_year",
             url: BASE_URL + "/?s=" + encodeURIComponent(cleanTitle + " " + year)
         });
     }
-    
+
     if (type === "tv") {
         strategies.push({
             name: "title_season",
             url: BASE_URL + "/?s=" + encodeURIComponent(cleanTitle + " Season " + season)
         });
     }
-    
+
     strategies.push({
         name: "title",
         url: BASE_URL + "/?s=" + encodeURIComponent(cleanTitle)
@@ -209,7 +211,7 @@ function scrape4KHDHub(title, year, type, season, episode, runtime, imdbId) {
             if (!html) return tryNextStrategy();
 
             var postUrl = null;
-            
+
             if (strategy.name === "wp_api") {
                 try {
                     var posts = JSON.parse(html);
@@ -301,7 +303,7 @@ function findBestPostUrl(html, title, year, type, season) {
         if (normSlug.indexOf(normTitle) !== -1 || normPost.indexOf(normTitle) !== -1) {
             score += 200;
         }
-        
+
         if (condensedTitle.length >= 2) {
             var condensedSlug = normSlug.replace(/\s/g, "");
             if (condensedSlug.indexOf(condensedTitle) !== -1) {
@@ -412,7 +414,7 @@ function processPostPage(html, postUrl, type, season, episode, showTitle, runtim
             var hostLow2 = String(stx._host || "").toLowerCase();
             var urlLow2 = String(stx.url || "").toLowerCase();
             var isPd2 = (hostLow2.indexOf("pixeldrain") !== -1 || urlLow2.indexOf("pixeldrain") !== -1);
-            
+
             if (isPd2 && hasNonPixeldrain) {
                 console.log("[4khdhub] removed PixelDrain (has alternative): " + stx._host);
                 continue;
@@ -429,7 +431,7 @@ function processPostPage(html, postUrl, type, season, episode, showTitle, runtim
         }
 
         var removeIndexes = [];
-        
+
         if (count1080 > 1) {
             var smallest1080Idx = -1;
             var smallestSize = Infinity;
@@ -458,23 +460,18 @@ function processPostPage(html, postUrl, type, season, episode, showTitle, runtim
             }
         }
 
-        // ── ترتيب: 4K أولاً (الأكبر→الأصغر)، ثم 1080p (الأكبر→الأصغر) ────
         finalList.sort(function(a, b) {
             var qa = String(a.quality || "").toUpperCase();
             var qb = String(b.quality || "").toUpperCase();
             var aIs4K = (qa === "4K" || qa === "2160P");
             var bIs4K = (qb === "4K" || qb === "2160P");
-            
+
             if (aIs4K && !bIs4K) return -1;
             if (!aIs4K && bIs4K) return 1;
-            
+
             return parseSize(b._sizeRaw) - parseSize(a._sizeRaw);
         });
 
-        // ═════════════════════════════════════════════════════════════════
-        // إضافة أرقام مرئية (01، 02، 03...) — تجبر Nuvio على الترتيب
-        // الصحيح، والأرقام تظهر للسيرفرات فقط، الحجم يبقى حقيقي
-        // ═════════════════════════════════════════════════════════════════
         for (var t = 0; t < finalList.length; t++) {
             var num = (t + 1);
             var numStr = num < 10 ? "0" + num : "" + num;
@@ -593,26 +590,91 @@ function extractDownloadLinks(html, isTv, season, episode) {
         }
     }
 
+    // ── FALLBACK: raw HTML scan (catches data-attrs + JS-embedded URLs) ──
+    if (items.length === 0) {
+        console.log("[4khdhub] anchor scan empty, trying raw HTML scan");
+        var rawSeen = {};
+        for (var r0 = 0; r0 < items.length; r0++) rawSeen[items[r0].url] = true;
+
+        var rawPatterns = [
+            /https?:\/\/[a-z0-9.-]*hubcloud\.[a-z0-9.-]+\/[^"'\s<>]+/gi,
+            /https?:\/\/[a-z0-9.-]*hubdrive\.[a-z0-9.-]+\/[^"'\s<>]+/gi,
+            /https?:\/\/[a-z0-9.-]*hubcdn\.[a-z0-9.-]+\/[^"'\s<>]+/gi,
+            /https?:\/\/[a-z0-9.-]*gadgetsweb\.[a-z0-9.-]+\/[^"'\s<>]+/gi,
+            /https?:\/\/4khdhub\.[a-z0-9.-]+\/(?:hubcloud|hubdrive|hubcdn|gadgetsweb|oxxfile|click|dl|download|go|redirect|link|extract)[^"'\s<>]*/gi
+        ];
+
+        for (var rp = 0; rp < rawPatterns.length; rp++) {
+            var rre = rawPatterns[rp];
+            var mm;
+            while ((mm = rre.exec(html)) !== null) {
+                var u = mm[0].replace(/&amp;/g, "&").replace(/\\\//g, "/");
+                if (rawSeen[u]) continue;
+                rawSeen[u] = true;
+                items.push({
+                    url: u,
+                    label: extractQualityLabel(html.substring(Math.max(0, mm.index - 200), mm.index + 200)),
+                    size: extractSize(html.substring(Math.max(0, mm.index - 300), mm.index + 100)),
+                    rawLabel: html.substring(Math.max(0, mm.index - 500), mm.index + 200).replace(/<[^>]+>/g, " ").slice(0, 200)
+                });
+                console.log("[4khdhub] raw scan found: " + u);
+            }
+        }
+    }
+
     return items;
 }
 
 function isHubUrl(url) {
     if (!url || typeof url !== "string") return false;
     var low = url.toLowerCase();
-    return /hubcloud\.[a-z0-9.-]+/i.test(low) ||
-           /hubdrive\.[a-z0-9.-]+/i.test(low) ||
-           /hubcdn\.[a-z0-9.-]+/i.test(low) ||
-           /hblinks\.[a-z0-9.-]+/i.test(low) ||
-           /gadgetsweb\.[a-z0-9.-]+/i.test(low) ||
-           /oxxfile\.[a-z0-9.-]+/i.test(low) ||
-           low.indexOf("/drive/") !== -1 ||
-           low.indexOf("/file/") !== -1 ||
-           low.indexOf(".r2.dev") !== -1 ||
-           low.indexOf("workers.dev") !== -1;
+
+    // Existing: hub subdomains
+    if (/hubcloud\.[a-z0-9.-]+/i.test(low)) return true;
+    if (/hubdrive\.[a-z0-9.-]+/i.test(low)) return true;
+    if (/hubcdn\.[a-z0-9.-]+/i.test(low)) return true;
+    if (/hblinks\.[a-z0-9.-]+/i.test(low)) return true;
+    if (/gadgetsweb\.[a-z0-9.-]+/i.test(low)) return true;
+    if (/oxxfile\.[a-z0-9.-]+/i.test(low)) return true;
+    if (low.indexOf("/drive/") !== -1) return true;
+    if (low.indexOf("/file/") !== -1) return true;
+    if (low.indexOf(".r2.dev") !== -1) return true;
+    if (low.indexOf("workers.dev") !== -1) return true;
+
+    // NEW: 4khdhub internal download endpoints — path-based
+    if (/\/(?:hubcloud|hubdrive|hubcdn|hblinks|gadgetsweb|oxxfile|click|dl|download|go|redirect|link|extract|watch|gdlink)(?:\.php|\.html|\?|\/|$)/i.test(low) &&
+        /(?:^|\.)4khdhub\.[a-z]+/i.test(low)) {
+        return true;
+    }
+
+    // NEW: 4khdhub query-based (?go=, ?dl=, ?id=, ?link=) — not search (?s=)
+    if (/(?:^|\.)4khdhub\.[a-z]+/i.test(low) && /\?(?:[^#]*&)?(?:go|dl|link|download|hub|id)=/i.test(low) && !/\?s=/i.test(low)) {
+        return true;
+    }
+
+    return false;
 }
 
 function resolveDirect(url, referer) {
     var low = (url || "").toLowerCase();
+
+    // 4khdhub.one internal download endpoints — follow once and re-extract
+    if (/(?:^|\.)4khdhub\.[a-z]+/i.test(low) && isHubUrl(url)) {
+        return fetchText(url, { "Referer": BASE_URL + "/" }).then(function(html) {
+            var hubMatch = html.match(/https?:\/\/[a-z0-9.-]*hubcloud\.[a-z0-9.-]+\/drive\/[A-Za-z0-9_\-]+/i) ||
+                           html.match(/https?:\/\/[a-z0-9.-]*hubdrive\.[a-z0-9.-]+\/[^"'\s<>]+/i) ||
+                           html.match(/https?:\/\/[a-z0-9.-]*gadgetsweb\.[a-z0-9.-]+\/[^"'\s<>]+/i) ||
+                           html.match(/href=["'](https?:\/\/[^"']*(?:hubcloud|hubdrive|gadgetsweb)\.[a-z0-9.-]+\/[^"']+)["']/i);
+            if (hubMatch) {
+                var next = (hubMatch[1] || hubMatch[0]).replace(/&amp;/g, "&");
+                if (/hubcloud\./i.test(next)) return resolveHubCloud(next);
+                if (/hubdrive\./i.test(next)) return resolveHubDrive(next);
+                if (/hubcdn\./i.test(next)) return resolveHubCdn(next);
+            }
+            return [];
+        }).catch(function() { return []; });
+    }
+
     if (/hubdrive\.[a-z0-9.-]+/i.test(low) || low.indexOf("/file/") !== -1) {
         return resolveHubDrive(url);
     }
