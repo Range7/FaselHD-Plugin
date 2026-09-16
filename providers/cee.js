@@ -2,6 +2,7 @@
 // FAST: parallel TMDB, reduced queries, parallel SUB/DUB search
 // Multi-language | 1080p only | Verified Dub/Sub
 // React Native compatible (Hermes-safe, no async/await)
+// TMDB key: read from Nuvio global exactly like Cinemana does.
 
 var __async = (__this, __arguments, generator) => {
   return new Promise((resolve, reject) => {
@@ -15,8 +16,13 @@ var __async = (__this, __arguments, generator) => {
 var CEE_BASE = "https://cee.buzz/api/android";
 var TMDB_BASE = "https://api.themoviedb.org/3";
 var UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36";
-var FETCH_TIMEOUT = 8e3;
-var TMDB_API_KEY = "439c478a771f35c05022f9feabcca01c";
+
+// ⚡ Same reduced timeouts as Cinemana
+var FETCH_TIMEOUT = 5000;
+var FAST_TIMEOUT = 3000;
+var QUICK_TIMEOUT = 6000;
+
+// ❌ TMDB_API_KEY hardcoded value removed — now read from Nuvio global (like Cinemana)
 
 function safeFetch(url, options, timeout) {
   var ms = timeout || FETCH_TIMEOUT;
@@ -64,19 +70,23 @@ function strictMatchScore(a, b) {
 // ─── TMDB: 2 parallel calls only ─────────────────────────
 function getTMDBInfo(tmdbId, mediaType) {
   return __async(this, null, function* () {
+    // ✅ Read key from Nuvio global, exactly like Cinemana
+    var key = typeof TMDB_API_KEY !== 'undefined' ? TMDB_API_KEY : '';
+    if (!key) { console.log("[Cee] TMDB_API_KEY not provided by Nuvio"); return null; }
+
     var type = mediaType === "movie" ? "movie" : "tv";
-    var urlMain = TMDB_BASE + "/" + type + "/" + tmdbId + "?api_key=" + TMDB_API_KEY + "&language=en-US";
-    var urlTrans = TMDB_BASE + "/" + type + "/" + tmdbId + "/translations?api_key=" + TMDB_API_KEY;
+    var urlMain = TMDB_BASE + "/" + type + "/" + tmdbId + "?api_key=" + key + "&language=en-US";
+    var urlTrans = TMDB_BASE + "/" + type + "/" + tmdbId + "/translations?api_key=" + key;
 
     try {
-      // Fetch both in parallel
-      var [rMain, rTrans] = yield Promise.all([
-        safeFetch(urlMain),
-        safeFetch(urlTrans, null, 8e3)
-      ]);
+      // ⚡ Fire both in parallel; translations get short timeout so it can't slow us down
+      var mainPromise = safeFetch(urlMain, null, FETCH_TIMEOUT);
+      var transPromise = safeFetch(urlTrans, null, FAST_TIMEOUT).catch(function () { return null; });
 
+      var rMain = yield mainPromise;
       if (!rMain.ok) { console.log("[Cee] TMDB main returned " + rMain.status); return null; }
       var d = yield rMain.json();
+
       var titleEn = d.title || d.name || "";
       var origTitle = d.original_title || d.original_name || titleEn;
       var origLang = d.original_language || "en";
@@ -88,33 +98,21 @@ function getTMDBInfo(tmdbId, mediaType) {
       if (titleEn) titles.push(titleEn);
       if (origTitle && origTitle !== titleEn) titles.push(origTitle);
 
-      // Parse translations (all languages in one call!)
-      if (rTrans.ok) {
-        var dTrans = yield rTrans.json();
-        var list = dTrans.translations || [];
-        for (var i = 0; i < list.length; i++) {
-          var t = list[i];
-          if (t && t.data) {
-            var tt = t.data.title || t.data.name || "";
-            if (tt && titles.indexOf(tt) === -1) titles.push(tt);
-          }
-        }
-      }
-
-      // For anime: try to get romaji from English alternative titles
-      if (origLang === "ja" && titles.length < 3) {
-        try {
-          var rAlt = yield safeFetch(TMDB_BASE + "/" + type + "/" + tmdbId + "/alternative_titles?api_key=" + TMDB_API_KEY, null, 6e3);
-          if (rAlt.ok) {
-            var dAlt = yield rAlt.json();
-            var alts = dAlt.results || dAlt.titles || [];
-            for (var i = 0; i < alts.length; i++) {
-              var a = alts[i].title || alts[i].name || "";
-              if (a && /[a-zA-Z]/.test(a) && titles.indexOf(a) === -1) titles.push(a);
+      // Merge translations (parallel call already in-flight)
+      try {
+        var rTrans = yield transPromise;
+        if (rTrans && rTrans.ok) {
+          var dTrans = yield rTrans.json();
+          var list = dTrans.translations || [];
+          for (var i = 0; i < list.length; i++) {
+            var t = list[i];
+            if (t && t.data) {
+              var tt = t.data.title || t.data.name || "";
+              if (tt && titles.indexOf(tt) === -1) titles.push(tt);
             }
           }
-        } catch (e) {}
-      }
+        }
+      } catch (e) { /* translations optional — ignore */ }
 
       console.log("[Cee] TMDB titles (" + titles.length + "): " + titles.slice(0, 5).join(" | ") + (titles.length > 5 ? " ..." : ""));
       return { titles: titles, originalLanguage: origLang, year: year };
@@ -129,7 +127,7 @@ function getTMDBInfo(tmdbId, mediaType) {
 function searchCee(query, type) {
   return __async(this, null, function* () {
     try {
-      var r = yield safeFetch(CEE_BASE + "/AdvancedSearch?videoTitle=" + encodeURIComponent(query) + "&type=" + type, null, 8e3);
+      var r = yield safeFetch(CEE_BASE + "/AdvancedSearch?videoTitle=" + encodeURIComponent(query) + "&type=" + type, null, QUICK_TIMEOUT);
       if (!r.ok) return [];
       var d = yield r.json();
       return Array.isArray(d) ? d : [];
@@ -140,7 +138,7 @@ function searchCee(query, type) {
 function getTranscodedFiles(id) {
   return __async(this, null, function* () {
     try {
-      var r = yield safeFetch(CEE_BASE + "/transcoddedFiles/id/" + id, null, 8e3);
+      var r = yield safeFetch(CEE_BASE + "/transcoddedFiles/id/" + id, null, QUICK_TIMEOUT);
       if (!r.ok) return [];
       var d = yield r.json();
       return Array.isArray(d) ? d : [];
@@ -151,7 +149,7 @@ function getTranscodedFiles(id) {
 function getSeriesEpisodes(id) {
   return __async(this, null, function* () {
     try {
-      var r = yield safeFetch(CEE_BASE + "/videoSeason/id/" + id, null, 8e3);
+      var r = yield safeFetch(CEE_BASE + "/videoSeason/id/" + id, null, QUICK_TIMEOUT);
       if (!r.ok) return [];
       var d = yield r.json();
       return Array.isArray(d) ? d : [];
@@ -162,7 +160,7 @@ function getSeriesEpisodes(id) {
 function getVideoInfo(id) {
   return __async(this, null, function* () {
     try {
-      var r = yield safeFetch(CEE_BASE + "/allVideoInfo/id/" + id, null, 8e3);
+      var r = yield safeFetch(CEE_BASE + "/allVideoInfo/id/" + id, null, FAST_TIMEOUT);
       if (!r.ok) return null;
       return yield r.json();
     } catch (e) { return null; }
@@ -187,9 +185,9 @@ function searchAndScore(tmdbInfo, mediaType, requireDubbed) {
     var isSeries = mediaType !== "movie";
     var isAnime = tmdbInfo.originalLanguage === "ja";
 
-    // Build only TOP 4 queries (fast!)
     var queries = [];
-    for (var t = 0; t < Math.min(tmdbInfo.titles.length, 4); t++) {
+    // ⚡ Reduced from 4 → 3 titles to cut down search count
+    for (var t = 0; t < Math.min(tmdbInfo.titles.length, 3); t++) {
       var title = tmdbInfo.titles[t];
       if (!title) continue;
       if (queries.indexOf(title) === -1) queries.push(title);
@@ -209,14 +207,12 @@ function searchAndScore(tmdbInfo, mediaType, requireDubbed) {
 
     console.log("[Cee] " + (requireDubbed ? "DUB" : "SUB") + " queries: " + queries.join(" | "));
 
-    // Search all queries in parallel!
     var searchPromises = [];
     for (var q = 0; q < queries.length; q++) {
       searchPromises.push(searchCee(queries[q], searchType));
     }
     var resultsArrays = yield Promise.all(searchPromises);
 
-    // Deduplicate
     var allResults = [];
     var seenIds = {};
     for (var r = 0; r < resultsArrays.length; r++) {
@@ -229,7 +225,6 @@ function searchAndScore(tmdbInfo, mediaType, requireDubbed) {
 
     console.log("[Cee] " + (requireDubbed ? "DUB" : "SUB") + " unique results: " + allResults.length);
 
-    // Score
     var best = null, bestScore = 0;
     for (var i = 0; i < allResults.length; i++) {
       var item = allResults[i];
@@ -285,16 +280,21 @@ function getStreamsFromMatch(match, mediaType, season, episode) {
       if (!targetId) return [];
     }
 
-    // Fetch video info + transcoded files in parallel
-    var [qualities, info] = yield Promise.all([
-      getTranscodedFiles(targetId),
-      getVideoInfo(targetId)
-    ]);
-    var subs = extractSubtitles(info);
+    // ⚡ Skip videoInfo for dubbed streams (subtitles not attached to dubs)
+    var qualitiesPromise = getTranscodedFiles(targetId);
+    var infoPromise = match.isDubbed ? Promise.resolve(null) : getVideoInfo(targetId);
+    var [qualities, info] = yield Promise.all([qualitiesPromise, infoPromise]);
+    var subs = match.isDubbed ? [] : extractSubtitles(info);
 
-    for (var i = 0; i < qualities.length; i++) {
-      var q = qualities[i];
-      if (!q.videoUrl) continue;
+    var seen = {};
+    var uniqueQualities = (Array.isArray(qualities) ? qualities : []).filter(function (q) {
+      if (!q.videoUrl || seen[q.videoUrl]) return false;
+      seen[q.videoUrl] = true;
+      return true;
+    });
+
+    for (var i = 0; i < uniqueQualities.length; i++) {
+      var q = uniqueQualities[i];
       var qName = q.resolution || q.name || "";
       if (!is1080p(qName)) continue;
       var stream = { name: label, title: "1080p", url: cleanUrl(q.videoUrl), quality: qName };
@@ -311,8 +311,10 @@ function getStreams(tmdbId, mediaType, season, episode) {
     var t0 = Date.now();
     console.log("[Cee] === " + mediaType + "/" + tmdbId + " S" + (season || "?") + "E" + (episode || "?") + " ===");
 
-    if (!TMDB_API_KEY || TMDB_API_KEY.indexOf("YOUR") !== -1) {
-      console.log("[Cee] ERROR: TMDB API key not set");
+    // ✅ Read key from Nuvio global, exactly like Cinemana
+    var key = typeof TMDB_API_KEY !== 'undefined' ? TMDB_API_KEY : '';
+    if (!key) {
+      console.log("[Cee] ERROR: TMDB_API_KEY not provided by Nuvio");
       return [];
     }
 
@@ -321,17 +323,16 @@ function getStreams(tmdbId, mediaType, season, episode) {
       if (!tmdbInfo) { console.log("[Cee] TMDB failed"); return []; }
       console.log("[Cee] lang=" + tmdbInfo.originalLanguage + " year=" + tmdbInfo.year);
 
-      // Search SUB and DUB in parallel!
+      // ⚡ Parallel SUB/DUB search
       var [subMatch, dubMatch] = yield Promise.all([
         searchAndScore(tmdbInfo, mediaType, false),
         searchAndScore(tmdbInfo, mediaType, true)
       ]);
 
-      var allStreams = [];
+      var tasks = [];
 
       if (subMatch) {
-        var subStreams = yield getStreamsFromMatch(subMatch, mediaType, season, episode);
-        for (var s = 0; s < subStreams.length; s++) allStreams.push(subStreams[s]);
+        tasks.push(getStreamsFromMatch(subMatch, mediaType, season, episode));
       }
 
       if (dubMatch) {
@@ -342,11 +343,17 @@ function getStreams(tmdbId, mediaType, season, episode) {
         }
         console.log("[Cee] DUB verify: '" + cleanDub + "' -> " + verifyScore);
         if (verifyScore >= 70) {
-          var dubStreams = yield getStreamsFromMatch(dubMatch, mediaType, season, episode);
-          for (var s = 0; s < dubStreams.length; s++) allStreams.push(dubStreams[s]);
+          tasks.push(getStreamsFromMatch(dubMatch, mediaType, season, episode));
         } else {
           console.log("[Cee] DUB verify FAILED (need 70+, got " + verifyScore + ")");
         }
+      }
+
+      var results = yield Promise.all(tasks);
+      var allStreams = [];
+      for (var i = 0; i < results.length; i++) {
+        var arr = results[i] || [];
+        for (var j = 0; j < arr.length; j++) allStreams.push(arr[j]);
       }
 
       console.log("[Cee] === Done: " + allStreams.length + " streams in " + (Date.now() - t0) + "ms ===");
