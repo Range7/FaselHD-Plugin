@@ -1,9 +1,8 @@
 // Cinemana Scraper for Nuvio Local Scrapers
 // FAST: parallel TMDB, parallel SUB/DUB search, parallel SUB/DUB stream fetch
-// Multi-quality: 4K فوق، 1080p تحته
+// Multi-quality: 4K فوق، 1080p تحته — ترتيب مضمون
 // React Native compatible (Hermes-safe, no async/await)
 // TMDB key: from Nuvio global only. Subtitles: translationFiles, same as code 2.
-
 
 var __async = (__this, __arguments, generator) => {
   return new Promise((resolve, reject) => {
@@ -48,12 +47,21 @@ function cleanUrl(url) { return url ? url.replace(/\\/g, "") : ""; }
 function isDubbedTitle(t) { if (!t) return false; t = t.toLowerCase(); return t.indexOf("مدبلج") !== -1 || t.indexOf("dubbed") !== -1 || t.indexOf("dub") !== -1 || t.indexOf("مدبلجة") !== -1; }
 function safeMedia(url) { return /^https:\/\/([a-z0-9-]+\.)*shabakaty\.(com|cc)\//i.test(String(url || "")); }
 
-// ─── تصنيف الجودة: 4K > 1080p ─────────────────────────────
+// ─── تصنيف الجودة: يشتغل على "2160p" و "4K" و "UHD" و "1080p" و "FHD" ───
 function qualityRank(qName) {
-  if (!qName) return 0;
-  var s = String(qName).toLowerCase();
-  if (s.indexOf("2160") !== -1 || s.indexOf("4k") !== -1) return 3;
-  if (s.indexOf("1080") !== -1) return 2;
+  if (qName === undefined || qName === null || qName === "") return 0;
+  var s = String(qName).toLowerCase().trim();
+  // حاول تلتقط الرقم أول (1080, 2160, 4320, 1440, 720...)
+  var m = s.match(/(\d{3,4})/);
+  if (m) {
+    var n = parseInt(m[1], 10);
+    if (n >= 2000) return 3;               // 4K: 2160p / 4320p
+    if (n >= 1000 && n < 2000) return 2;   // 1080p
+    return 0;                               // 720p وأقل — مرفوض
+  }
+  // ما فيه رقم — اعتمد على النص
+  if (s.indexOf("4k") !== -1 || s.indexOf("uhd") !== -1) return 3;
+  if (s.indexOf("1080") !== -1 || s.indexOf("fhd") !== -1 || s.indexOf("full hd") !== -1 || s.indexOf("fullhd") !== -1) return 2;
   return 0;
 }
 function qualityLabel(qName) {
@@ -79,7 +87,7 @@ function strictMatchScore(a, b) {
   return ratio >= 0.9 ? Math.round(75 + ratio * 15) : Math.round(ratio * 70);
 }
 
-// ─── TMDB: 2 parallel calls only ─────────────────────────
+// ─── TMDB ──────────────────────────────────────────────
 function getTMDBInfo(tmdbId, mediaType) {
   return __async(this, null, function* () {
     var key = typeof TMDB_API_KEY !== 'undefined' ? TMDB_API_KEY : '';
@@ -177,7 +185,7 @@ function getSeriesEpisodes(id) {
   });
 }
 
-// ─── Subtitles: same source + parsing as code 2 ────────────
+// ─── Subtitles ─────────────────────────────────────────
 function getTranslationFiles(id) {
   return __async(this, null, function* () {
     try {
@@ -205,7 +213,7 @@ function buildSubtitles(data) {
   return subs;
 }
 
-// ─── Search & Score ─────────────────────────────────────
+// ─── Search & Score ────────────────────────────────────
 function searchAndScore(tmdbInfo, mediaType, requireDubbed) {
   return __async(this, null, function* () {
     var searchType = mediaType === "movie" ? "movie" : "series";
@@ -286,7 +294,7 @@ function searchAndScore(tmdbInfo, mediaType, requireDubbed) {
   });
 }
 
-// ─── Get streams ────────────────────────────────────────
+// ─── Get streams ───────────────────────────────────────
 function getStreamsFromMatch(match, mediaType, season, episode) {
   return __async(this, null, function* () {
     var label = match.isDubbed ? "Cinemana | مدبلج عربي" : "Cinemana | مترجم";
@@ -317,23 +325,27 @@ function getStreamsFromMatch(match, mediaType, season, episode) {
     for (var i = 0; i < qArr.length; i++) {
       var q = qArr[i];
       if (!q.videoUrl) continue;
-      var qName = q.resolution || q.name || "";
-      var rank = qualityRank(qName);
+      // جرّب كل حقول الجودة المحتملة — أول حقل يعطي rank أعلى يفوز
+      var r1 = qualityRank(q.resolution);
+      var r2 = qualityRank(q.name);
+      var r3 = qualityRank(q.quality);
+      var rank = Math.max(r1, r2, r3);
       if (rank === 0) continue;
       var u = cleanUrl(q.videoUrl);
       if (!u || seen[u]) continue;
       seen[u] = true;
-      candidates.push({ url: u, qName: qName, rank: rank });
+      candidates.push({ url: u, rank: rank });
     }
 
     if (candidates.length === 0) return [];
 
+    // ترتيب: rank 3 (4K) قبل rank 2 (1080p)
     candidates.sort(function(a, b) { return b.rank - a.rank; });
 
     var streams = [];
     for (var c = 0; c < candidates.length; c++) {
       var cand = candidates[c];
-      var qLabel = qualityLabel(cand.qName);
+      var qLabel = cand.rank === 3 ? "4K" : "1080p";
       var stream = {
         name: label,
         title: label + "\n" + qLabel,
@@ -350,7 +362,7 @@ function getStreamsFromMatch(match, mediaType, season, episode) {
   });
 }
 
-// ─── Main ───────────────────────────────────────────────
+// ─── Main ──────────────────────────────────────────────
 function getStreams(tmdbId, mediaType, season, episode) {
   return __async(this, null, function* () {
     var t0 = Date.now();
@@ -402,9 +414,10 @@ function getStreams(tmdbId, mediaType, season, episode) {
         for (var s = 0; s < arr.length; s++) allStreams.push(arr[s]);
       }
 
+      // الترتيب النهائي: 4K فوق 1080p، ومهما كان المصدر (SUB أو DUB)
       allStreams.sort(function(a, b) {
-        var ra = qualityRank(a.quality || "");
-        var rb = qualityRank(b.quality || "");
+        var ra = qualityRank(a.quality);
+        var rb = qualityRank(b.quality);
         return rb - ra;
       });
 
