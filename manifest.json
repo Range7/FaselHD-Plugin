@@ -84,7 +84,7 @@
       "id": "nuvio-cee",
       "name": "Cee",
       "description": "Cee - Arabic movies & series with multi-quality streams",
-      "version": "1.0",
+      "version": "1.1",
       "author": "He",
       "supportedTypes": ["movie", "tv", "anime"],
       "filename": "providers/cee.js",
