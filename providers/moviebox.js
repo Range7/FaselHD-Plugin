@@ -1,6 +1,7 @@
 // MovieBox Scraper for Nuvio
 // Strict 1080p ONLY | Dual Audio (VERIFIED) | Subtitles | Ultra-strict matching
 // React Native / Hermes compatible — Promise chains only
+// TMDB key: read from Nuvio-injected global only. No embedded key.
 
 var __async = (__this, __arguments, generator) => {
   return new Promise((resolve, reject) => {
@@ -17,7 +18,7 @@ var __async = (__this, __arguments, generator) => {
 
 var API_BASE      = "https://h5-api.aoneroom.com/wefeed-h5api-bff";
 var PLAYER_DOMAIN = "https://netfilm.world";
-var TMDB_API_KEY  = "439c478a771f35c05022f9feabcca01c";
+var TMDB_API_KEY  = (typeof TMDB_API_KEY !== "undefined" && TMDB_API_KEY) || "";
 var UA            = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36";
 var FETCH_TIMEOUT = 15000;
 
@@ -127,6 +128,11 @@ function findStrictMatch(results, tmdbTitle, tmdbYear) {
 
 // ─── TMDB Metadata ───────────────────────────────────────
 function getTmdbMeta(tmdbId, mediaType) {
+  if (!TMDB_API_KEY) {
+    console.log("[MovieBox] TMDB_API_KEY not provided by Nuvio");
+    return Promise.resolve(null);
+  }
+
   var tmdbPath = mediaType === "movie" ? "movie" : "tv";
   var tmdbUrl = "https://api.themoviedb.org/3/" + tmdbPath + "/" + tmdbId + "?api_key=" + TMDB_API_KEY;
 
@@ -260,15 +266,9 @@ function getMovieBoxDetail(detailPath, token) {
 }
 
 // ─── Verify Dub Title ────────────────────────────────────
-// CRITICAL: Verify that the Arabic dub's detailPath actually points to the same show
 function verifyDubTitle(detailPath, expectedTitle, token) {
   return getMovieBoxDetail(detailPath, token).then(function(detail) {
     var subject = (detail.dubs && detail.dubs[0]) ? detail.dubs[0] : {};
-    // The detail response doesn't have a direct title, so we check if the first dub's detailPath matches
-    // Actually, we need to get the title from the detail response
-    // Since the detail API returns data.subject, we can use that
-    // But we already called getMovieBoxDetail which returns dubs array
-    // We need to re-fetch to get the actual title
     return safeFetch(API_BASE + "/detail?detailPath=" + detailPath, {
       headers: {
         "User-Agent": UA,
@@ -514,9 +514,18 @@ function getStreams(tmdbId, mediaType, season, episode) {
     var type = mediaType === "movie" ? "movie" : "series";
     console.log("[MovieBox] === " + type + "/" + tmdbId + " S" + (season || 1) + "E" + (episode || 1) + " ===");
 
+    if (!TMDB_API_KEY) {
+      console.log("[MovieBox] ERROR: TMDB_API_KEY not provided by Nuvio");
+      return [];
+    }
+
     try {
       var token = yield getBearerToken();
       var meta = yield getTmdbMeta(tmdbId, mediaType);
+      if (!meta) {
+        console.log("[MovieBox] TMDB meta unavailable.");
+        return [];
+      }
       var searchTitle = meta.searchTitle || meta.title;
       console.log("[MovieBox] TMDB: '" + meta.title + "' (year: " + meta.year + ")");
 
