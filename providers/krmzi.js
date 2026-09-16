@@ -1,18 +1,3 @@
-/**
- * Krmizi / Qrmzi provider for Nuvio — STRICT 1080p ONLY Edition
- * Version: 1.2.0
- *
- * Based on renoomon's krmizi provider, modified to return ONLY 1080p streams.
- * All non-1080p qualities are filtered out at every stage.
- *
- * v1.1.0: Fixed multi-season episode numbering.
- * v1.1.1: Fixed resolveAnaPlayer rejecting non-season-1 episodes.
- * v1.2.0: Fixed episode detection for seasons 2+ when the series page HTML
- *          contains only the first batch of episodes. Broadened the episode
- *          selector to catch all /episode/ links, added URL derivation as a
- *          fallback, and made EPISODES_PER_SEASON dynamic via TMDB API.
- */
-
 "use strict";
 
 var cheerio = require("cheerio-without-node-native");
@@ -20,364 +5,215 @@ var cheerio = require("cheerio-without-node-native");
 var VERSION = "1.2.0";
 var TMDB_BASE = "https://www.themoviedb.org";
 var TMDB_API = "https://api.themoviedb.org/3";
-var SITE_BASES = [
-  "https://www.qrmzi.tv",
-  "https://krmizi.onl",
-  "https://v2.qrmzi.website"
-];
+var SITE_BASES = ["https://www.qrmzi.tv", "https://krmizi.onl", "https://v2.qrmzi.website"];
 var UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 var MAX_SERIES_PROBES = 6;
 var MAX_SERVERS = 8;
 var EPISODES_PER_SEASON_DEFAULT = 18;
-
-/** Computed cumulative episode count of seasons before the requested one. */
 var _cumulativeEpisodeOffset = 0;
 
-function log(key, value) {
-  var suffix = value === undefined || value === null || value === "" ? "" : " " + String(value);
-  console.log("[Krmizi v" + VERSION + "] " + key + suffix);
-}
+function log(k, v) { var s = v === undefined || v === null || v === "" ? "" : " " + String(v); console.log("[Krmizi v" + VERSION + "] " + k + s); }
+function logFailure(r, d) { console.log("[Krmizi v" + VERSION + "] failure=" + r + (d ? " detail=" + String(d) : "")); }
+function errorMessage(e) { return e && e.message ? e.message : String(e || "unknown_error"); }
+function originOf(u) { var m = String(u || "").match(/^(https?:\/\/[^\/]+)/i); return m ? m[1] : ""; }
 
-function logFailure(reason, detail) {
-  var suffix = detail ? " detail=" + String(detail) : "";
-  console.log("[Krmizi v" + VERSION + "] failure=" + reason + suffix);
-}
-
-function errorMessage(error) {
-  return error && error.message ? error.message : String(error || "unknown_error");
-}
-
-function originOf(url) {
-  var match = String(url || "").match(/^(https?:\/\/[^\/]+)/i);
-  return match ? match[1] : "";
-}
-
-function decodeHtml(value) {
-  return String(value || "")
+function decodeHtml(v) {
+  return String(v || "")
     .replace(/&amp;/gi, "&")
     .replace(/&#0*38;/gi, "&")
     .replace(/&quot;/gi, "\"")
-    .replace(/&#0*39;|'/gi, "'")
+    .replace(/&#0*39;/gi, "'")
     .replace(/&lt;/gi, "<")
     .replace(/&gt;/gi, ">")
-    .replace(/&#x([0-9a-f]+);/gi, function (_, hex) {
-      return String.fromCharCode(parseInt(hex, 16));
-    })
-    .replace(/&#([0-9]+);/g, function (_, decimal) {
-      return String.fromCharCode(parseInt(decimal, 10));
-    });
+    .replace(/&#x([0-9a-f]+);/gi, function (_, h) { return String.fromCharCode(parseInt(h, 16)); })
+    .replace(/&#([0-9]+);/g, function (_, d) { return String.fromCharCode(parseInt(d, 10)); });
 }
 
-function cleanUrlValue(value) {
-  return decodeHtml(value)
-    .replace(/\\u0026/gi, "&")
-    .replace(/\\u003d/gi, "=")
-    .replace(/\\\//g, "/")
-    .trim();
+function cleanUrlValue(v) {
+  return decodeHtml(v).replace(/\\u0026/gi, "&").replace(/\\u003d/gi, "=").replace(/\\\//g, "/").trim();
 }
 
-function absUrl(value, base) {
-  var url = cleanUrlValue(value);
+function absUrl(v, base) {
+  var url = cleanUrlValue(v);
   if (!url || /^javascript:/i.test(url) || url.charAt(0) === "#") return "";
   if (url.indexOf("//") === 0) return "https:" + url;
   if (/^https?:\/\//i.test(url)) return url;
-
   var origin = originOf(base || SITE_BASES[0]);
   if (url.charAt(0) === "/") return origin + url;
-
-  var cleanBase = String(base || SITE_BASES[0]).split("#")[0].split("?")[0];
-  if (cleanBase.charAt(cleanBase.length - 1) !== "/") {
-    cleanBase = cleanBase.substring(0, cleanBase.lastIndexOf("/") + 1);
-  }
-  return cleanBase + url;
+  var cb = String(base || SITE_BASES[0]).split("#")[0].split("?")[0];
+  if (cb.charAt(cb.length - 1) !== "/") cb = cb.substring(0, cb.lastIndexOf("/") + 1);
+  return cb + url;
 }
 
-function urlKey(url) {
-  var value = String(url || "").split("#")[0].split("?")[0].replace(/\/+$/, "");
-  try {
-    value = decodeURIComponent(value);
-  } catch (_) {}
-  return value.toLowerCase();
+function urlKey(u) {
+  var v = String(u || "").split("#")[0].split("?")[0].replace(/\/+$/, "");
+  try { v = decodeURIComponent(v); } catch (_) {}
+  return v.toLowerCase();
 }
 
-function pathKey(url) {
-  var match = urlKey(url).match(/^https?:\/\/[^\/]+(\/.*)$/i);
-  return match ? match[1] : "";
-}
+function pathKey(u) { var m = urlKey(u).match(/^https?:\/\/[^\/]+(\/.*)$/i); return m ? m[1] : ""; }
 
 function requestHeaders(referer, origin, accept) {
-  var headers = {
-    "User-Agent": UA,
-    "Accept": accept || "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "ar,en-US;q=0.8,en;q=0.7,tr;q=0.6"
-  };
-  if (referer) headers.Referer = referer;
-  if (origin) headers.Origin = origin;
-  return headers;
+  var h = { "User-Agent": UA, "Accept": accept || "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", "Accept-Language": "ar,en-US;q=0.8,en;q=0.7,tr;q=0.6" };
+  if (referer) h.Referer = referer;
+  if (origin) h.Origin = origin;
+  return h;
 }
 
 function isChallenge(html) {
-  var text = String(html || "").toLowerCase();
-  return text.indexOf("cf-chl-") >= 0 ||
-    text.indexOf("challenge-platform") >= 0 ||
-    text.indexOf("just a moment") >= 0 ||
-    text.indexOf("checking your browser") >= 0 ||
-    text.indexOf("cloudflare ray id") >= 0;
+  var t = String(html || "").toLowerCase();
+  return t.indexOf("cf-chl-") >= 0 || t.indexOf("challenge-platform") >= 0 || t.indexOf("just a moment") >= 0 || t.indexOf("checking your browser") >= 0 || t.indexOf("cloudflare ray id") >= 0;
 }
 
 function fetchTextInfo(url, referer, origin, accept) {
-  return fetch(url, {
-    headers: requestHeaders(referer, origin, accept),
-    skipSizeCheck: true
-  }).then(function (response) {
-    if (!response) throw new Error("http_no_response " + url);
-    return response.text().then(function (body) {
+  return fetch(url, { headers: requestHeaders(referer, origin, accept), skipSizeCheck: true }).then(function (r) {
+    if (!r) throw new Error("http_no_response " + url);
+    return r.text().then(function (body) {
       if (isChallenge(body)) throw new Error("cloudflare_challenge " + url);
-      if (!response.ok) throw new Error("http_" + response.status + " " + url);
-      return {
-        html: String(body || ""),
-        url: response.url || url,
-        status: response.status
-      };
+      if (!r.ok) throw new Error("http_" + r.status + " " + url);
+      return { html: String(body || ""), url: r.url || url, status: r.status };
     });
   });
 }
 
 function fetchJson(url, referer, origin) {
-  return fetchTextInfo(url, referer, origin, "application/json,text/plain,*/*")
-    .then(function (result) {
-      try {
-        return JSON.parse(result.html);
-      } catch (_) {
-        throw new Error("invalid_json " + url);
-      }
-    });
+  return fetchTextInfo(url, referer, origin, "application/json,text/plain,*/*").then(function (r) {
+    try { return JSON.parse(r.html); } catch (_) { throw new Error("invalid_json " + url); }
+  });
 }
 
-function wrap($, element) {
-  if (element && typeof element.attr === "function") return element;
-  return $(element);
-}
+function wrap($, el) { if (el && typeof el.attr === "function") return el; return $(el); }
 
-function normalize(value) {
-  return decodeHtml(value)
-    .toLowerCase()
-    .replace(/[إأآٱا]/g, "ا")
-    .replace(/ى/g, "ي")
-    .replace(/ة/g, "ه")
-    .replace(/[ؤئ]/g, "ء")
+function normalize(v) {
+  return decodeHtml(v).toLowerCase()
+    .replace(/[إأآٱا]/g, "ا").replace(/ى/g, "ي").replace(/ة/g, "ه").replace(/[ؤئ]/g, "ء")
     .replace(/[\u064B-\u065F\u0670]/g, "")
     .replace(/[ـ\u200B-\u200D\uFEFF]/g, "")
-    .replace(/[ıİ]/g, "i")
-    .replace(/[şŞ]/g, "s")
-    .replace(/[ğĞ]/g, "g")
-    .replace(/[üÜ]/g, "u")
-    .replace(/[öÖ]/g, "o")
-    .replace(/[çÇ]/g, "c")
-    .replace(/[^a-z0-9\u0600-\u06FF]+/gi, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+    .replace(/[ıİ]/g, "i").replace(/[şŞ]/g, "s").replace(/[ğĞ]/g, "g")
+    .replace(/[üÜ]/g, "u").replace(/[öÖ]/g, "o").replace(/[çÇ]/g, "c")
+    .replace(/[^a-z0-9\u0600-\u06FF]+/gi, " ").replace(/\s+/g, " ").trim();
 }
 
-function compactTitle(value) {
-  return normalize(value)
-    .replace(/(^|\s)(مسلسل|المسلسل|series|tv|show|مترجم|مترجمه|كامل|كامله|قرمزي|qrmzi|krmizi)(?=\s|$)/g, " ")
-    .replace(/\s+\d{4}\s*$/, "")
-    .replace(/\s+/g, " ")
-    .trim();
+function compactTitle(v) {
+  return normalize(v).replace(/(^|\s)(مسلسل|المسلسل|series|tv|show|مترجم|مترجمه|كامل|كامله|قرمزي|qrmzi|krmizi)(?=\s|$)/g, " ").replace(/\s+\d{4}\s*$/, "").replace(/\s+/g, " ").trim();
 }
 
-function cleanTmdbTitle(value) {
-  return decodeHtml(value)
-    .replace(/\s*\(TV Series\s+\d{4}[^)]*\).*$/i, "")
-    .replace(/\s*\(\d{4}\)\s*$/, "")
-    .replace(/\s*[-—]\s*The Movie Database.*$/i, "")
-    .replace(/\s*\|\s*TMDB.*$/i, "")
-    .replace(/\s+/g, " ")
-    .trim();
+function cleanTmdbTitle(v) {
+  return decodeHtml(v).replace(/\s*\(TV Series\s+\d{4}[^)]*\).*$/i, "").replace(/\s*\(\d{4}\)\s*$/, "").replace(/\s*[-—]\s*The Movie Database.*$/i, "").replace(/\s*\|\s*TMDB.*$/i, "").replace(/\s+/g, " ").trim();
 }
 
-function addTitle(list, seen, value) {
-  var clean = cleanTmdbTitle(value);
+function addTitle(list, seen, v) {
+  var clean = cleanTmdbTitle(v);
   if (!clean || compactTitle(clean).length < 2) return;
   var key = normalize(clean);
-  if (!seen[key]) {
-    seen[key] = true;
-    list.push(clean);
-  }
-
-  var withoutCodes = clean.replace(/^(?:[A-Z]{1,3}\s+){1,4}/, "").trim();
-  var derivedKey = normalize(withoutCodes);
-  if (withoutCodes && derivedKey.length >= 2 && !seen[derivedKey]) {
-    seen[derivedKey] = true;
-    list.push(withoutCodes);
-  }
+  if (!seen[key]) { seen[key] = true; list.push(clean); }
+  var wc = clean.replace(/^(?:[A-Z]{1,3}\s+){1,4}/, "").trim();
+  var wk = normalize(wc);
+  if (wc && wk.length >= 2 && !seen[wk]) { seen[wk] = true; list.push(wc); }
 }
 
-function phraseContains(haystack, needle) {
-  if (!haystack || !needle || needle.length < 3) return false;
-  return (" " + haystack + " ").indexOf(" " + needle + " ") >= 0;
-}
+function phraseContains(h, n) { if (!h || !n || n.length < 3) return false; return (" " + h + " ").indexOf(" " + n + " ") >= 0; }
 
 function fieldMatchScore(field, titles) {
-  var normalizedField = normalize(field);
-  var compactField = compactTitle(field);
-  if (!normalizedField) return 0;
+  var nf = normalize(field);
+  var cf = compactTitle(field);
+  if (!nf) return 0;
   var best = 0;
-
   for (var i = 0; i < titles.length; i++) {
-    var title = compactTitle(titles[i]);
-    if (!title || title.length < 2) continue;
-    if (compactField === title) best = Math.max(best, 120);
-    else if (normalizedField === normalize(titles[i])) best = Math.max(best, 115);
-    else if (phraseContains(normalizedField, title)) best = Math.max(best, 80);
+    var t = compactTitle(titles[i]);
+    if (!t || t.length < 2) continue;
+    if (cf === t) best = Math.max(best, 120);
+    else if (nf === normalize(titles[i])) best = Math.max(best, 115);
+    else if (phraseContains(nf, t)) best = Math.max(best, 80);
   }
   return best;
 }
 
-/**
- * Extract the episode number from any text (anchor label, URL, title).
- *
- * v1.2.0: added URL-based patterns to catch anchors whose visible text
- * doesn't include a number, only the URL does (e.g. /episode/abi-19/).
- */
-function episodeNumber(value) {
-  var text = decodeHtml(value);
-  var match = text.match(/(?:الحلقة|الحلقه|حلقة|حلقه)\s*[:\-]?\s*(\d{1,4})/i);
-  if (!match) match = text.match(/\bS\d{1,2}E(\d{1,4})\b/i);
-  if (!match) match = text.match(/\bep(?:isode)?[\s._-]*(\d{1,4})\b/i);
-  if (!match) match = text.match(/[-_\/]e(\d{1,4})(?:[\/?._-]|$)/i);
-  /* NEW: /episode/slug-19/ or /episode/slug_19 or /episode/19 */
-  if (!match && /\/episode\//i.test(text)) {
-    match = text.match(/\/episode\/[^\/?#\s]*-?(\d{1,4})(?:[\/?#._-]|$)/i);
-  }
-  /* NEW: last-resort trailing number on a /episode/ URL */
-  if (!match && /\/episode\//i.test(text)) {
-    match = text.match(/[-_\/](\d{1,4})(?:[\/?#._-]|$)/);
-  }
-  return match ? parseInt(match[1], 10) : NaN;
+function episodeNumber(v) {
+  var t = decodeHtml(v);
+  var m = t.match(/(?:الحلقة|الحلقه|حلقة|حلقه)\s*[:\-]?\s*(\d{1,4})/i);
+  if (!m) m = t.match(/\bS\d{1,2}E(\d{1,4})\b/i);
+  if (!m) m = t.match(/\bep(?:isode)?[\s._-]*(\d{1,4})\b/i);
+  if (!m) m = t.match(/[-_\/]e(\d{1,4})(?:[\/?._-]|$)/i);
+  if (!m && /\/episode\//i.test(t)) m = t.match(/\/episode\/[^\/?#\s]*-?(\d{1,4})(?:[\/?#._-]|$)/i);
+  if (!m && /\/episode\//i.test(t)) m = t.match(/[-_\/](\d{1,4})(?:[\/?#._-]|$)/);
+  return m ? parseInt(m[1], 10) : NaN;
 }
 
-/**
- * Compute the episode number as it appears on Qrmzi.
- *
- * v1.2.0: uses a module-level cumulative offset computed from TMDB season data
- * (with EPISODES_PER_SEASON_DEFAULT as fallback) instead of the hardcoded 18.
- */
-function siteEpisodeNumber(wantedSeason, wantedEpisode) {
-  if (wantedSeason <= 1) return wantedEpisode;
-  var offset = _cumulativeEpisodeOffset > 0
-    ? _cumulativeEpisodeOffset
-    : (wantedSeason - 1) * EPISODES_PER_SEASON_DEFAULT;
-  return offset + wantedEpisode;
+function siteEpisodeNumber(s, e) {
+  if (s <= 1) return e;
+  var off = _cumulativeEpisodeOffset > 0 ? _cumulativeEpisodeOffset : (s - 1) * EPISODES_PER_SEASON_DEFAULT;
+  return off + e;
 }
 
-/**
- * NEW: derive a target episode URL from an existing sample episode URL.
- * e.g. /episode/abi-20/ -> /episode/abi-19/
- */
-function deriveEpisodeUrlFromSample(sampleUrl, wantedEp) {
-  var m = sampleUrl.match(/^(.*\/episode\/[^\/?#]*?)(\d{1,4})([\/?#].*)?$/);
-  if (m) return m[1] + wantedEp + (m[3] || "");
-  m = sampleUrl.match(/^(.*\/episode\/)(\d{1,4})([\/?#].*)?$/);
-  if (m) return m[1] + wantedEp + (m[3] || "");
+function deriveEpisodeUrlFromSample(sample, ep) {
+  var m = sample.match(/^(.*\/episode\/[^\/?#]*?)(\d{1,4})([\/?#].*)?$/);
+  if (m) return m[1] + ep + (m[3] || "");
+  m = sample.match(/^(.*\/episode\/)(\d{1,4})([\/?#].*)?$/);
+  if (m) return m[1] + ep + (m[3] || "");
   return "";
 }
 
-function explicitSeasonEpisode(value) {
-  var match = String(value || "").match(/\bS(\d{1,2})E(\d{1,4})\b/i);
-  if (!match) match = String(value || "").match(/(?:season|الموسم)[\s._-]*(\d{1,2})[\s._-]*(?:episode|الحلقة)[\s._-]*(\d{1,4})/i);
-  return match ? { season: parseInt(match[1], 10), episode: parseInt(match[2], 10) } : null;
+function explicitSeasonEpisode(v) {
+  var m = String(v || "").match(/\bS(\d{1,2})E(\d{1,4})\b/i);
+  if (!m) m = String(v || "").match(/(?:season|الموسم)[\s._-]*(\d{1,2})[\s._-]*(?:episode|الحلقة)[\s._-]*(\d{1,4})/i);
+  return m ? { season: parseInt(m[1], 10), episode: parseInt(m[2], 10) } : null;
 }
 
-function seasonFromText(text) {
-  var value = String(text || "");
-  var match = value.match(/الموسم\s+(الأول|الاول|الثاني|الثالث|الرابع|الخامس|السادس|السابع|الثامن|التاسع|العاشر)/i);
-  if (match) {
-    var arabicOrdinals = {
-      "الأول": 1, "الاول": 1, "الثاني": 2, "الثالث": 3, "الرابع": 4,
-      "الخامس": 5, "السادس": 6, "السابع": 7, "الثامن": 8,
-      "التاسع": 9, "العاشر": 10
-    };
-    var normalizedOrdinal = match[1].replace(/أ/g, "ا");
-    if (arabicOrdinals[normalizedOrdinal]) return arabicOrdinals[normalizedOrdinal];
-    if (arabicOrdinals[match[1]]) return arabicOrdinals[match[1]];
+function seasonFromText(t) {
+  var v = String(t || "");
+  var m = v.match(/الموسم\s+(الأول|الاول|الثاني|الثالث|الرابع|الخامس|السادس|السابع|الثامن|التاسع|العاشر)/i);
+  if (m) {
+    var ar = { "الأول": 1, "الاول": 1, "الثاني": 2, "الثالث": 3, "الرابع": 4, "الخامس": 5, "السادس": 6, "السابع": 7, "الثامن": 8, "التاسع": 9, "العاشر": 10 };
+    var no = m[1].replace(/أ/g, "ا");
+    if (ar[no]) return ar[no];
+    if (ar[m[1]]) return ar[m[1]];
   }
-  match = value.match(/(?:الموسم|season|موسم)[\s._-]*(\d{1,2})/i);
-  if (match) return parseInt(match[1], 10);
-  match = value.match(/\bS(\d{1,2})\b/i);
-  if (match) return parseInt(match[1], 10);
+  m = v.match(/(?:الموسم|season|موسم)[\s._-]*(\d{1,2})/i);
+  if (m) return parseInt(m[1], 10);
+  m = v.match(/\bS(\d{1,2})\b/i);
+  if (m) return parseInt(m[1], 10);
   return NaN;
 }
 
 function parseTmdbPage(html) {
   var $ = cheerio.load(html);
-  var pageTitle = $("title").first().text() || "";
-  var title = cleanTmdbTitle(
-    $('meta[property="og:title"]').attr("content") ||
-    $("section.inner_content h2 a").first().text() ||
-    $("h2 a").first().text() ||
-    pageTitle
-  );
-  var yearMatch = pageTitle.match(/(?:TV Series\s+|\()(\d{4})/i);
-  return { title: title, year: yearMatch ? parseInt(yearMatch[1], 10) : 0 };
+  var pt = $("title").first().text() || "";
+  var title = cleanTmdbTitle($('meta[property="og:title"]').attr("content") || $("section.inner_content h2 a").first().text() || $("h2 a").first().text() || pt);
+  var ym = pt.match(/(?:TV Series\s+|\()(\d{4})/i);
+  return { title: title, year: ym ? parseInt(ym[1], 10) : 0 };
 }
 
 function parseTmdbAlternativeTitles(html) {
   var $ = cheerio.load(html);
   var titles = [];
-  $("table.titles tbody tr").each(function (_, element) {
-    var row = wrap($, element);
-    var cells = row.find("td");
-    var value = cells.first().text();
-    if (value) titles.push(value.replace(/\s+/g, " ").trim());
+  $("table.titles tbody tr").each(function (_, el) {
+    var row = wrap($, el);
+    var val = row.find("td").first().text();
+    if (val) titles.push(val.replace(/\s+/g, " ").trim());
   });
   return titles;
 }
 
 function getTmdbMetadata(tmdbId) {
-  var languages = ["tr-TR", "en-US", "ar-SA"];
-  var pageJobs = [];
-  for (var i = 0; i < languages.length; i++) {
-    pageJobs.push(
-      fetchTextInfo(TMDB_BASE + "/tv/" + encodeURIComponent(tmdbId) + "?language=" + languages[i], "", "")
-      .then(function (result) { return parseTmdbPage(result.html); })
-      .catch(function () { return { title: "", year: 0 }; })
-    );
+  var langs = ["tr-TR", "en-US", "ar-SA"];
+  var jobs = [];
+  for (var i = 0; i < langs.length; i++) {
+    jobs.push(fetchTextInfo(TMDB_BASE + "/tv/" + encodeURIComponent(tmdbId) + "?language=" + langs[i], "", "").then(function (r) { return parseTmdbPage(r.html); }).catch(function () { return { title: "", year: 0 }; }));
   }
-
-  var aliasesJob = fetchTextInfo(
-    TMDB_BASE + "/tv/" + encodeURIComponent(tmdbId) + "/titles?language=en-US",
-    "",
-    ""
-  ).then(function (result) {
-    return parseTmdbAlternativeTitles(result.html);
-  }).catch(function () {
-    return [];
-  });
-
-  return Promise.all([Promise.all(pageJobs), aliasesJob]).then(function (parts) {
+  var aliases = fetchTextInfo(TMDB_BASE + "/tv/" + encodeURIComponent(tmdbId) + "/titles?language=en-US", "", "").then(function (r) { return parseTmdbAlternativeTitles(r.html); }).catch(function () { return []; });
+  return Promise.all([Promise.all(jobs), aliases]).then(function (parts) {
     var pages = parts[0] || [];
-    var aliases = parts[1] || [];
+    var al = parts[1] || [];
     var titles = [];
     var seen = {};
     var year = 0;
-
-    for (var p = 0; p < pages.length; p++) {
-      addTitle(titles, seen, pages[p].title);
-      if (!year && pages[p].year) year = pages[p].year;
-    }
-    for (var a = 0; a < aliases.length && titles.length < 50; a++) {
-      addTitle(titles, seen, aliases[a]);
-    }
-
+    for (var p = 0; p < pages.length; p++) { addTitle(titles, seen, pages[p].title); if (!year && pages[p].year) year = pages[p].year; }
+    for (var a = 0; a < al.length && titles.length < 50; a++) addTitle(titles, seen, al[a]);
     return { titles: titles, year: year };
   });
 }
 
-/**
- * NEW: read TMDB API key from Nuvio injection (no embedded key).
- */
 function getTmdbKey() {
   var k = "";
   try { if (typeof TMDB_API_KEY !== "undefined" && TMDB_API_KEY) k = TMDB_API_KEY; } catch (e) {}
@@ -386,41 +222,24 @@ function getTmdbKey() {
   return String(k || "");
 }
 
-/**
- * NEW: fetch episode_count for a season from TMDB API.
- */
-function fetchSeasonEpisodeCount(tmdbId, seasonNumber) {
+function fetchSeasonEpisodeCount(tmdbId, sn) {
   var key = getTmdbKey();
   if (!key) return Promise.resolve(NaN);
-  var url = TMDB_API + "/tv/" + encodeURIComponent(tmdbId) + "/season/" + seasonNumber + "?api_key=" + key;
-  return fetch(url, { headers: { "User-Agent": UA, "Accept": "application/json" } })
-    .then(function (r) {
-      if (!r || !r.ok) return NaN;
-      return r.json().then(function (d) {
-        return (d && typeof d.episode_count === "number" && d.episode_count > 0) ? d.episode_count : NaN;
-      });
-    })
-    .catch(function () { return NaN; });
+  var url = TMDB_API + "/tv/" + encodeURIComponent(tmdbId) + "/season/" + sn + "?api_key=" + key;
+  return fetch(url, { headers: { "User-Agent": UA, "Accept": "application/json" } }).then(function (r) {
+    if (!r || !r.ok) return NaN;
+    return r.json().then(function (d) { return (d && typeof d.episode_count === "number" && d.episode_count > 0) ? d.episode_count : NaN; });
+  }).catch(function () { return NaN; });
 }
 
-/**
- * NEW: sum episode counts from seasons 1..wantedSeason-1.
- * Falls back to EPISODES_PER_SEASON_DEFAULT on any failure.
- */
 function computeCumulativeEpisodes(tmdbId, wantedSeason) {
   if (wantedSeason <= 1) return Promise.resolve(0);
   var jobs = [];
-  for (var s = 1; s < wantedSeason; s++) {
-    jobs.push(fetchSeasonEpisodeCount(tmdbId, s));
-  }
+  for (var s = 1; s < wantedSeason; s++) jobs.push(fetchSeasonEpisodeCount(tmdbId, s));
   return Promise.all(jobs).then(function (counts) {
     var total = 0;
     for (var i = 0; i < counts.length; i++) {
-      if (isNaN(counts[i])) {
-        var fallback = (wantedSeason - 1) * EPISODES_PER_SEASON_DEFAULT;
-        log("cumulative_episodes", "fallback=" + fallback);
-        return fallback;
-      }
+      if (isNaN(counts[i])) { var fb = (wantedSeason - 1) * EPISODES_PER_SEASON_DEFAULT; log("cumulative_episodes", "fallback=" + fb); return fb; }
       total += counts[i];
     }
     return total;
@@ -431,542 +250,345 @@ function parseSeriesCards(html, pageUrl, titles) {
   var $ = cheerio.load(html);
   var cards = [];
   var seen = {};
-
-  $('article.postEp a[href*="/series/"]').each(function (_, element) {
-    var anchor = wrap($, element);
-    var url = absUrl(anchor.attr("href"), pageUrl);
+  $('article.postEp a[href*="/series/"]').each(function (_, el) {
+    var a = wrap($, el);
+    var url = absUrl(a.attr("href"), pageUrl);
     if (!url || seen[urlKey(url)]) return;
-
-    var image = anchor.find("img").first();
-    var headingFields = [
-      anchor.attr("title") || "",
-      anchor.find(".title").first().text() || "",
-      image.attr("alt") || ""
-    ];
-    var heading = headingFields.join(" ");
-    var poster = image.attr("data-src") || image.attr("src") || "";
-    var headingScore = 0;
-    for (var h = 0; h < headingFields.length; h++) {
-      headingScore = Math.max(headingScore, fieldMatchScore(headingFields[h], titles));
-    }
-    var posterScore = Math.max(fieldMatchScore(poster, titles), fieldMatchScore(url, titles));
-    var score = headingScore;
-    if (posterScore >= 80) score = Math.max(score, 105);
-
+    var img = a.find("img").first();
+    var hf = [a.attr("title") || "", a.find(".title").first().text() || "", img.attr("alt") || ""];
+    var heading = hf.join(" ");
+    var poster = img.attr("data-src") || img.attr("src") || "";
+    var hs = 0;
+    for (var h = 0; h < hf.length; h++) hs = Math.max(hs, fieldMatchScore(hf[h], titles));
+    var ps = Math.max(fieldMatchScore(poster, titles), fieldMatchScore(url, titles));
+    var score = hs;
+    if (ps >= 80) score = Math.max(score, 105);
     if (score >= 100) {
       seen[urlKey(url)] = true;
-      cards.push({
-        url: url,
-        heading: heading.replace(/\s+/g, " ").trim(),
-        poster: poster,
-        score: score
-      });
+      cards.push({ url: url, heading: heading.replace(/\s+/g, " ").trim(), poster: poster, score: score });
     }
   });
-
-  cards.sort(function (left, right) { return right.score - left.score; });
+  cards.sort(function (l, r) { return r.score - l.score; });
   return cards;
 }
 
 function seriesSelfIdentity($) {
   return {
-    headings: [
-      $(".singleSeries h1").first().text() || "",
-      $("h1").first().text() || "",
-      $("title").first().text() || ""
-    ],
-    details: [
-      $('meta[name="description"]').attr("content") || "",
-      $('meta[property="og:description"]').attr("content") || "",
-      $(".singleSeries .story").first().text() || "",
-      $(".singleSeries img").first().attr("data-src") || "",
-      $(".singleSeries img").first().attr("src") || ""
-    ]
+    headings: [$(".singleSeries h1").first().text() || "", $("h1").first().text() || "", $("title").first().text() || ""],
+    details: [$('meta[name="description"]').attr("content") || "", $('meta[property="og:description"]').attr("content") || "", $(".singleSeries .story").first().text() || "", $(".singleSeries img").first().attr("data-src") || "", $(".singleSeries img").first().attr("src") || ""]
   };
 }
 
 function verifySeriesCard(card, titles, indexUrl) {
-  return fetchTextInfo(card.url, indexUrl, "").then(function (result) {
-    var $ = cheerio.load(result.html);
-    var identity = seriesSelfIdentity($);
-    var headingScore = 0;
-    var detailScore = fieldMatchScore(result.url, titles);
+  return fetchTextInfo(card.url, indexUrl, "").then(function (r) {
+    var $ = cheerio.load(r.html);
+    var id = seriesSelfIdentity($);
+    var hs = 0;
+    var ds = fieldMatchScore(r.url, titles);
     var i;
-    for (i = 0; i < identity.headings.length; i++) {
-      headingScore = Math.max(headingScore, fieldMatchScore(identity.headings[i], titles));
-    }
-    for (i = 0; i < identity.details.length; i++) {
-      detailScore = Math.max(detailScore, fieldMatchScore(identity.details[i], titles));
-    }
-    var verified = headingScore >= 110 || (card.score >= 105 && detailScore >= 80);
-    if (!verified) return null;
-
-    return {
-      url: result.url,
-      html: result.html,
-      heading: $(".singleSeries h1").first().text() || $("h1").first().text() || card.heading,
-      score: Math.max(card.score, headingScore, detailScore)
-    };
-  }).catch(function (error) {
-    if (errorMessage(error).indexOf("cloudflare_challenge") === 0) {
-      logFailure("cloudflare_challenge", originOf(card.url));
-    }
+    for (i = 0; i < id.headings.length; i++) hs = Math.max(hs, fieldMatchScore(id.headings[i], titles));
+    for (i = 0; i < id.details.length; i++) ds = Math.max(ds, fieldMatchScore(id.details[i], titles));
+    if (!(hs >= 110 || (card.score >= 105 && ds >= 80))) return null;
+    return { url: r.url, html: r.html, heading: $(".singleSeries h1").first().text() || $("h1").first().text() || card.heading, score: Math.max(card.score, hs, ds) };
+  }).catch(function (e) {
+    if (errorMessage(e).indexOf("cloudflare_challenge") === 0) logFailure("cloudflare_challenge", originOf(card.url));
     return null;
   });
 }
 
 function verifyRankedCards(cards, titles, indexUrl) {
-  var index = 0;
+  var idx = 0;
   function next() {
-    if (index >= cards.length || index >= MAX_SERIES_PROBES) return Promise.resolve(null);
-    var card = cards[index++];
-    return verifySeriesCard(card, titles, indexUrl).then(function (series) {
-      if (series) return series;
-      return next();
-    });
+    if (idx >= cards.length || idx >= MAX_SERIES_PROBES) return Promise.resolve(null);
+    var c = cards[idx++];
+    return verifySeriesCard(c, titles, indexUrl).then(function (s) { if (s) return s; return next(); });
   }
   return next();
 }
 
 function resolveSeries(metadata) {
-  var baseIndex = 0;
-
+  var bi = 0;
   function nextBase() {
-    if (baseIndex >= SITE_BASES.length) return Promise.resolve(null);
-    var base = SITE_BASES[baseIndex++];
+    if (bi >= SITE_BASES.length) return Promise.resolve(null);
+    var base = SITE_BASES[bi++];
     var indexUrl = base + "/all-turkish-series/";
-
-    return fetchTextInfo(indexUrl, base + "/", "").then(function (result) {
-      var cards = parseSeriesCards(result.html, result.url, metadata.titles);
+    return fetchTextInfo(indexUrl, base + "/", "").then(function (r) {
+      var cards = parseSeriesCards(r.html, r.url, metadata.titles);
       if (!cards.length) return nextBase();
-      return verifyRankedCards(cards, metadata.titles, result.url).then(function (series) {
-        if (series) return series;
-        return nextBase();
-      });
-    }).catch(function (error) {
-      if (errorMessage(error).indexOf("cloudflare_challenge") === 0) {
-        logFailure("cloudflare_challenge", originOf(indexUrl));
-      }
+      return verifyRankedCards(cards, metadata.titles, r.url).then(function (s) { if (s) return s; return nextBase(); });
+    }).catch(function (e) {
+      if (errorMessage(e).indexOf("cloudflare_challenge") === 0) logFailure("cloudflare_challenge", originOf(indexUrl));
       return nextBase();
     });
   }
-
   return nextBase();
 }
 
-/**
- * Find the exact episode on the series page.
- *
- * v1.2.0 — Fallback for missing episodes:
- * The series page HTML may only contain the first batch of episodes (e.g. 18).
- * We now scan ALL /episode/ anchors (broadened selector) and, if the target
- * episode still isn't found, derive its URL from any sample episode URL and
- * let verifyEpisodePage confirm it.
- */
 function findExactEpisode(series, wantedSeason, wantedEpisode) {
   var $ = cheerio.load(series.html);
   var matches = [];
   var seen = {};
-
   var siteEp = siteEpisodeNumber(wantedSeason, wantedEpisode);
   var candidates = [];
   if (siteEp !== wantedEpisode) candidates.push(siteEp);
   candidates.push(wantedEpisode);
-  /* Nearby safety net (e.g. site might be off-by-one on some series) */
   if (siteEp !== wantedEpisode) {
     if (candidates.indexOf(siteEp + 1) === -1) candidates.push(siteEp + 1);
     if (siteEp > 1 && candidates.indexOf(siteEp - 1) === -1) candidates.push(siteEp - 1);
   }
 
-  log("episode_candidates", "candidates=" + candidates.join(",") +
-      " (wanted=S" + wantedSeason + "E" + wantedEpisode +
-      ", siteEp=" + siteEp + ")");
+  log("episode_candidates", "candidates=" + candidates.join(",") + " (wanted=S" + wantedSeason + "E" + wantedEpisode + ", siteEp=" + siteEp + ")");
 
-  /* Broadened selector — any anchor pointing to /episode/ */
-  $('a[href*="/episode/"]').each(function (_, element) {
-    var anchor = wrap($, element);
-    var url = absUrl(anchor.attr("href"), series.url);
+  $('a[href*="/episode/"]').each(function (_, el) {
+    var a = wrap($, el);
+    var url = absUrl(a.attr("href"), series.url);
     if (!url || seen[urlKey(url)]) return;
-    var identity = [
-      anchor.attr("title") || "",
-      anchor.find(".episodeNum").first().text() || "",
-      anchor.find(".title").first().text() || "",
-      anchor.find("img").first().attr("alt") || "",
-      url
-    ].join(" ");
-    var epNum = episodeNumber(identity);
+    var id = [a.attr("title") || "", a.find(".episodeNum").first().text() || "", a.find(".title").first().text() || "", a.find("img").first().attr("alt") || "", url].join(" ");
+    var epNum = episodeNumber(id);
     if (candidates.indexOf(epNum) === -1) return;
-
-    var explicit = explicitSeasonEpisode(identity);
+    var explicit = explicitSeasonEpisode(id);
     if (explicit && explicit.season !== wantedSeason) return;
-
     seen[urlKey(url)] = true;
-    matches.push({ url: url, identity: identity, explicit: explicit, epNum: epNum });
+    matches.push({ url: url, identity: id, explicit: explicit, epNum: epNum });
   });
 
   log("episode_matches", "count=" + matches.length);
 
   if (matches.length) {
-    /* Priority 1: exact match on the site episode number */
-    var siteMatches = [];
-    for (var i = 0; i < matches.length; i++) {
-      if (matches[i].epNum === siteEp) siteMatches.push(matches[i]);
-    }
-    if (siteMatches.length === 1) {
-      log("episode_match", "site_ep=" + siteEp);
-      return siteMatches[0];
-    }
-
-    /* Priority 2: exact match on the raw episode number */
-    var rawMatches = [];
-    for (var j = 0; j < matches.length; j++) {
-      if (matches[j].epNum === wantedEpisode) rawMatches.push(matches[j]);
-    }
-    if (rawMatches.length === 1) {
-      log("episode_match", "raw_ep=" + wantedEpisode);
-      return rawMatches[0];
-    }
-
-    /* Priority 3: disambiguate via explicit S#E# */
+    var sm = [];
+    for (var i = 0; i < matches.length; i++) if (matches[i].epNum === siteEp) sm.push(matches[i]);
+    if (sm.length === 1) { log("episode_match", "site_ep=" + siteEp); return sm[0]; }
+    var rm = [];
+    for (var j = 0; j < matches.length; j++) if (matches[j].epNum === wantedEpisode) rm.push(matches[j]);
+    if (rm.length === 1) { log("episode_match", "raw_ep=" + wantedEpisode); return rm[0]; }
     if (matches.length > 1) {
-      var explicitMatches = [];
-      for (var k = 0; k < matches.length; k++) {
-        if (matches[k].explicit && matches[k].explicit.season === wantedSeason &&
-            matches[k].explicit.episode === wantedEpisode) {
-          explicitMatches.push(matches[k]);
-        }
-      }
-      if (explicitMatches.length === 1) return explicitMatches[0];
+      var em = [];
+      for (var k = 0; k < matches.length; k++) if (matches[k].explicit && matches[k].explicit.season === wantedSeason && matches[k].explicit.episode === wantedEpisode) em.push(matches[k]);
+      if (em.length === 1) return em[0];
     }
-
-    /* Priority 4: single match fallback */
     if (matches.length === 1) {
-      var single = matches[0];
-      if (!single.explicit && wantedSeason > 1) {
-        var seriesSeason = seasonFromText(series.heading + " " + series.url);
-        if (!isNaN(seriesSeason) && seriesSeason !== wantedSeason) {
-          logFailure("season_mismatch_single", "seriesSeason=" + seriesSeason);
-          /* fall through to URL derivation */
-        } else {
-          return single;
-        }
-      } else {
-        return single;
-      }
+      var s = matches[0];
+      if (!s.explicit && wantedSeason > 1) {
+        var ss = seasonFromText(series.heading + " " + series.url);
+        if (!isNaN(ss) && ss !== wantedSeason) logFailure("season_mismatch_single", "seriesSeason=" + ss);
+        else return s;
+      } else return s;
     }
   }
 
-  /* FALLBACK: derive the target URL from any sample episode URL on the page. */
-  var sampleUrl = "";
+  var sample = "";
   $('a[href*="/episode/"]').each(function (_, el) {
-    if (sampleUrl) return false;
-    var h = $(el).attr("href") || "";
-    var u = absUrl(h, series.url);
-    if (u && /\/episode\//i.test(u)) sampleUrl = u;
+    if (sample) return false;
+    var u = absUrl($(el).attr("href") || "", series.url);
+    if (u && /\/episode\//i.test(u)) sample = u;
   });
-
-  if (sampleUrl) {
-    var derivedUrl = deriveEpisodeUrlFromSample(sampleUrl, siteEp);
-    if (derivedUrl && derivedUrl !== sampleUrl) {
-      log("derived_url", "sample=" + sampleUrl + " -> " + derivedUrl);
-      return {
-        url: derivedUrl,
-        identity: "derived " + derivedUrl,
-        explicit: null,
-        epNum: siteEp
-      };
+  if (sample) {
+    var derived = deriveEpisodeUrlFromSample(sample, siteEp);
+    if (derived && derived !== sample) {
+      log("derived_url", "sample=" + sample + " -> " + derived);
+      return { url: derived, identity: "derived " + derived, explicit: null, epNum: siteEp };
     }
   }
 
-  logFailure("episode_not_found", "S" + wantedSeason + "E" + wantedEpisode +
-             " (site candidates: " + candidates.join(",") + ")");
+  logFailure("episode_not_found", "S" + wantedSeason + "E" + wantedEpisode + " (site candidates: " + candidates.join(",") + ")");
   return null;
 }
 
-function anaPlayerAllowed(url) {
-  return /^https?:\/\/[^\/]*anaplayer\.online\//i.test(String(url || ""));
-}
+function anaPlayerAllowed(u) { return /^https?:\/\/[^\/]*anaplayer\.online\//i.test(String(u || "")); }
+function directMedia(u) { return /\.(?:m3u8|mp4)(?:[?#]|$)/i.test(String(u || "")); }
 
-function directMedia(url) {
-  return /\.(?:m3u8|mp4)(?:[?#]|$)/i.test(String(url || ""));
-}
-
-function verifyEpisodePage(series, episodeCandidate, wantedSeason, wantedEpisode) {
+function verifyEpisodePage(series, epCand, wantedSeason, wantedEpisode) {
   var siteEp = siteEpisodeNumber(wantedSeason, wantedEpisode);
-
-  return fetchTextInfo(episodeCandidate.url, series.url, "").then(function (result) {
-    var $ = cheerio.load(result.html);
-    var heading = [
-      $(".singleInfo h1").first().text() || "",
-      $("h1").first().text() || "",
-      $("title").first().text() || ""
-    ].join(" ");
-    var headingEpNum = episodeNumber(heading);
-
-    if (headingEpNum !== wantedEpisode && headingEpNum !== siteEp) {
-      logFailure("episode_identity_mismatch", "number: heading=" + headingEpNum +
-                 " wanted=" + wantedEpisode + " site=" + siteEp);
+  return fetchTextInfo(epCand.url, series.url, "").then(function (r) {
+    var $ = cheerio.load(r.html);
+    var heading = [$(".singleInfo h1").first().text() || "", $("h1").first().text() || "", $("title").first().text() || ""].join(" ");
+    var headingEp = episodeNumber(heading);
+    if (headingEp !== wantedEpisode && headingEp !== siteEp) {
+      logFailure("episode_identity_mismatch", "number: heading=" + headingEp + " wanted=" + wantedEpisode + " site=" + siteEp);
       return null;
     }
-
     var seriesLink = $("h2 a[href*=\"/series/\"]").first();
-    var linkedSeriesUrl = absUrl(seriesLink.attr("href"), result.url);
-    if (!linkedSeriesUrl || urlKey(linkedSeriesUrl) !== urlKey(series.url)) {
-      logFailure("episode_identity_mismatch", "series");
-      return null;
-    }
-
-    var playerNode = $(".getEmbed .watch iframe[src]").first();
-    var playerUrl = absUrl(playerNode.attr("src"), result.url);
+    var linkedSeries = absUrl(seriesLink.attr("href"), r.url);
+    if (!linkedSeries || urlKey(linkedSeries) !== urlKey(series.url)) { logFailure("episode_identity_mismatch", "series"); return null; }
+    var pn = $(".getEmbed .watch iframe[src]").first();
+    var playerUrl = absUrl(pn.attr("src"), r.url);
     if (!playerUrl) {
-      var directNode = $(".getEmbed .watch video[src], .getEmbed .watch source[src]").first();
-      playerUrl = absUrl(directNode.attr("src"), result.url);
+      var dn = $(".getEmbed .watch video[src], .getEmbed .watch source[src]").first();
+      playerUrl = absUrl(dn.attr("src"), r.url);
     }
-    if (!playerUrl || (!anaPlayerAllowed(playerUrl) && !directMedia(playerUrl))) {
-      logFailure("player_not_found", "page_container");
-      return null;
-    }
-
-    var explicit =": explicitSeasonEpisode(playerUrl + " " + heading);
+    if (!playerUrl || (!anaPlayerAllowed(playerUrl) && !directMedia(playerUrl))) { logFailure("player_not_found", "page_container"); return null; }
+    var explicit = explicitSeasonEpisode(playerUrl + " " + heading);
     if (explicit) {
-      if (explicit.season !== wantedSeason) {
-        logFailure("player_identity_mismatch", "S" + explicit.season + "E" + explicit.episode);
-        return null;
-      }
-      if (explicit.episode !== wantedEpisode && explicit.episode !== siteEp) {
-        logFailure("player_identity_mismatch", "episode: explicit=" + explicit.episode +
-                   " wanted=" + wantedEpisode + " site=" + siteEp);
-        return null;
-      }
+      if (explicit.season !== wantedSeason) { logFailure("player_identity_mismatch", "S" + explicit.season + "E" + explicit.episode); return null; }
+      if (explicit.episode !== wantedEpisode && explicit.episode !== siteEp) { logFailure("player_identity_mismatch", "episode: explicit=" + explicit.episode + " wanted=" + wantedEpisode + " site=" + siteEp); return null; }
     } else if (wantedSeason > 1) {
-      var headingSeason = seasonFromText(heading);
-      var seriesLinkSeason = seasonFromText(seriesLink.text() || "");
-      var seriesPageSeason = seasonFromText(series.heading + " " + series.url);
-
-      if (!isNaN(headingSeason) && headingSeason !== wantedSeason) {
-        logFailure("player_identity_mismatch", "heading_season=" + headingSeason);
-        return null;
-      }
-      if (!isNaN(seriesLinkSeason) && seriesLinkSeason !== wantedSeason) {
-        logFailure("player_identity_mismatch", "seriesLink_season=" + seriesLinkSeason);
-        return null;
-      }
-      if (!isNaN(seriesPageSeason) && seriesPageSeason !== wantedSeason) {
-        logFailure("player_identity_mismatch", "seriesPage_season=" + seriesPageSeason);
-        return null;
-      }
+      var hs = seasonFromText(heading);
+      var ss = seasonFromText(seriesLink.text() || "");
+      var ps = seasonFromText(series.heading + " " + series.url);
+      if (!isNaN(hs) && hs !== wantedSeason) { logFailure("player_identity_mismatch", "heading_season=" + hs); return null; }
+      if (!isNaN(ss) && ss !== wantedSeason) { logFailure("player_identity_mismatch", "seriesLink_season=" + ss); return null; }
+      if (!isNaN(ps) && ps !== wantedSeason) { logFailure("player_identity_mismatch", "seriesPage_season=" + ps); return null; }
     }
-
-    return {
-      episodeUrl: result.url,
-      playerUrl: playerUrl,
-      season: wantedSeason,
-      episode: wantedEpisode
-    };
-  }).catch(function (error) {
-    if (errorMessage(error).indexOf("cloudflare_challenge") === 0) {
-      logFailure("cloudflare_challenge", originOf(episodeCandidate.url));
-    }
+    return { episodeUrl: r.url, playerUrl: playerUrl, season: wantedSeason, episode: wantedEpisode };
+  }).catch(function (e) {
+    if (errorMessage(e).indexOf("cloudflare_challenge") === 0) logFailure("cloudflare_challenge", originOf(epCand.url));
     return null;
   });
 }
 
-function qualityFromText(value) {
-  var text = String(value || "").toLowerCase();
-  function hasResolutionToken(height) {
-    return new RegExp("(^|[^a-z0-9])" + height + "p?(?=$|[^a-z0-9])", "i").test(text);
-  }
-  if (hasResolutionToken("2160") || /(^|[^a-z0-9])4k(?=$|[^a-z0-9])|\buhd\b/.test(text)) return "4K";
-  if (hasResolutionToken("1080") || /full\s*hd|\bfhd\b/.test(text)) return "1080p";
-  if (hasResolutionToken("720")) return "720p";
-  if (hasResolutionToken("576")) return "576p";
-  if (hasResolutionToken("480") || /\bsd\b/.test(text)) return "480p";
-  if (hasResolutionToken("360") || /\bmobile\b/.test(text)) return "360p";
-  if (hasResolutionToken("320")) return "320p";
+function qualityFromText(v) {
+  var t = String(v || "").toLowerCase();
+  function h(n) { return new RegExp("(^|[^a-z0-9])" + n + "p?(?=$|[^a-z0-9])", "i").test(t); }
+  if (h("2160") || /(^|[^a-z0-9])4k(?=$|[^a-z0-9])|\buhd\b/.test(t)) return "4K";
+  if (h("1080") || /full\s*hd|\bfhd\b/.test(t)) return "1080p";
+  if (h("720")) return "720p";
+  if (h("576")) return "576p";
+  if (h("480") || /\bsd\b/.test(t)) return "480p";
+  if (h("360") || /\bmobile\b/.test(t)) return "360p";
+  if (h("320")) return "320p";
   return "";
 }
 
-function qualityFromResolution(widthValue, heightValue) {
-  var width = parseInt(widthValue, 10) || 0;
-  var height = parseInt(heightValue, 10) || 0;
-  if (height >= 2000 || width >= 3800) return "4K";
-  if (height >= 1000 || width >= 1900) return "1080p";
-  if (height >= 700 || width >= 1200) return "720p";
-  if (height >= 560) return "576p";
-  if (height >= 460) return "480p";
-  if (height >= 340) return "360p";
-  return height ? height + "p" : "";
+function qualityFromResolution(w, h) {
+  var W = parseInt(w, 10) || 0;
+  var H = parseInt(h, 10) || 0;
+  if (H >= 2000 || W >= 3800) return "4K";
+  if (H >= 1000 || W >= 1900) return "1080p";
+  if (H >= 700 || W >= 1200) return "720p";
+  if (H >= 560) return "576p";
+  if (H >= 460) return "480p";
+  if (H >= 340) return "360p";
+  return H ? H + "p" : "";
 }
 
-function qualityRank(quality) {
-  var ranks = { "4K 7000, "2160p": 7000, "1080p": 6000, "720p": 5000, "576p": 4000, "480p": 3000, "360p": 2000, "320p": 1000 };
-  return ranks[quality] || 0;
+function qualityRank(q) {
+  var r = { "4K": 7000, "2160p": 7000, "1080p": 6000, "720p": 5000, "576p": 4000, "480p": 3000, "360p": 2000, "320p": 1000 };
+  return r[q] || 0;
 }
 
-function mediaTypeFromUrl(url) {
-  if (/\.m3u8(?:[?#]|$)/i.test(url)) return "m3u8";
-  if (/\.mp4(?:[?#]|$)/i.test(url)) return "mp4";
+function mediaTypeFromUrl(u) {
+  if (/\.m3u8(?:[?#]|$)/i.test(u)) return "m3u8";
+  if (/\.mp4(?:[?#]|$)/i.test(u)) return "mp4";
   return "";
 }
 
 function streamObject(url, referer, quality, serverName) {
-  var resolvedQuality = quality || qualityFromText(url);
+  var q = quality || qualityFromText(url);
   var label = String(serverName || "Server").replace(/\s+/g, " ").trim();
   var headers = { "User-Agent": UA };
-  if (referer) {
-    headers.Referer = referer;
-    var origin = originOf(referer);
-    if (origin) headers.Origin = origin;
-  }
-
-  var stream = {
-    name: "Krmizi",
-    title: "Krmizi • " + label + (resolvedQuality ? " • " + resolvedQuality : ""),
-    url: url,
-    provider: "Krmizi",
-    language: "ar",
-    headers: headers
-  };
-  if (resolvedQuality) stream.quality = resolvedQuality;
-  var type = mediaTypeFromUrl(url);
-  if (type) stream.type = type;
+  if (referer) { headers.Referer = referer; var o = originOf(referer); if (o) headers.Origin = o; }
+  var stream = { name: "Krmizi", title: "Krmizi • " + label + (q ? " • " + q : ""), url: url, provider: "Krmizi", language: "ar", headers: headers };
+  if (q) stream.quality = q;
+  var t = mediaTypeFromUrl(url);
+  if (t) stream.type = t;
   return stream;
 }
 
 function parseHlsMaster(text, masterUrl) {
   var lines = String(text || "").replace(/\r/g, "").split("\n");
   var variants = [];
-
   for (var i = 0; i < lines.length; i++) {
     if (lines[i].indexOf("#EXT-X-STREAM-INF:") !== 0) continue;
     var info = lines[i];
-    var resolution = info.match(/RESOLUTION=(\d+)x(\d+)/i);
-    var quality = resolution ? qualityFromResolution(resolution[1], resolution[2]) : qualityFromText(info);
-
-    var next = i + 1;
-    while (next < lines.length && (!lines[next].trim() || lines[next].charAt(0) === "#")) next++;
-    if (next >= lines.length) continue;
-    var url = absUrl(lines[next].trim(), masterUrl);
-    if (url) variants.push({ url: url, quality: quality || qualityFromText(url) });
+    var res = info.match(/RESOLUTION=(\d+)x(\d+)/i);
+    var q = res ? qualityFromResolution(res[1], res[2]) : qualityFromText(info);
+    var n = i + 1;
+    while (n < lines.length && (!lines[n].trim() || lines[n].charAt(0) === "#")) n++;
+    if (n >= lines.length) continue;
+    var url = absUrl(lines[n].trim(), masterUrl);
+    if (url) variants.push({ url: url, quality: q || qualityFromText(url) });
   }
   return variants;
 }
 
 function variantsFromEncodedMaster(masterUrl) {
-  var value = String(masterUrl || "");
-  var match = value.match(/^(https?:\/\/[^?#]+\/)([^\/?#]+)_((?:,[a-z0-9]+)+),?\.urlset\/master\.m3u8(\?[^#]*)?$/i);
-  if (!match) return [];
-
-  var qualities = { l: "360p", n: "480p", h: "720p", x: "1080p" };
-  var codes = match[3].split(",");
-  var variants = [];
+  var v = String(masterUrl || "");
+  var m = v.match(/^(https?:\/\/[^?#]+\/)([^\/?#]+)_((?:,[a-z0-9]+)+),?\.urlset\/master\.m3u8(\?[^#]*)?$/i);
+  if (!m) return [];
+  var qs = { l: "360p", n: "480p", h: "720p", x: "1080p" };
+  var codes = m[3].split(",");
+  var out = [];
   var seen = {};
   for (var i = 0; i < codes.length; i++) {
-    var code = String(codes[i] || "").toLowerCase();
-    if (code !== "x") continue;
-    if (!qualities[code] || seen[code]) continue;
-    seen[code] = true;
-    variants.push({
-      url: match[1] + match[2] + "_" + code + "/index-v1-a1.m3u8" + (match[4] || ""),
-      quality: qualities[code]
-    });
+    var c = String(codes[i] || "").toLowerCase();
+    if (c !== "x") continue;
+    if (!qs[c] || seen[c]) continue;
+    seen[c] = true;
+    out.push({ url: m[1] + m[2] + "_" + c + "/index-v1-a1.m3u8" + (m[4] || ""), quality: qs[c] });
   }
-  return variants;
+  return out;
 }
 
-function isMasterPlaylistUrl(url) {
-  return /(?:master\.m3u8|\.urlset\/)/i.test(String(url || ""));
+function isMasterPlaylistUrl(u) { return /(?:master\.m3u8|\.urlset\/)/i.test(String(u || "")); }
+function isHlsPlaylistText(t) { return /^\s*#EXTM3U(?:\s|$)/i.test(String(t || "").replace(/^\uFEFF/, "")); }
+function reliableHlsSource(u, r, s) { var id = String(u || "") + " " + String(r || "") + " " + String(s || ""); return /cdnplus(?:\.space)?|dailymotion|dai\.ly|dmcdn/i.test(id); }
+
+function unescapePackedString(v) {
+  return String(v || "").replace(/\\'/g, "'").replace(/\\\\/g, "\\").replace(/\\n/g, "\n").replace(/\\r/g, "\r").replace(/\\t/g, "\t");
 }
 
-function isHlsPlaylistText(text) {
-  return /^\s*#EXTM3U(?:\s|$)/i.test(String(text || "").replace(/^\uFEFF/, ""));
-}
-
-function reliableHlsSource(url, referer, serverName) {
-  var identity = String(url || "") + " " + String(referer || "") + " " + String(serverName || "");
-  return /cdnplus(?:\.space)?|dailymotion|dai\.ly|dmcdn/i.test(identity);
-}
-
-function unescapePackedString(value) {
-  return String(value || "")
-    .replace(/\\'/g, "'")
-    .replace(/\\\\/g, "\\")
-    .replace(/\\n/g, "\n")
-    .replace(/\\r/g, "\r")
-    .replace(/\\t/g, "\t");
-}
-
-function unpackDeanEdwards(source) {
-  var text = String(source || "");
-  var pattern = /eval\(function\(p,a,c,k,e,d\)\{[\s\S]*?\}\('((?:\\.|[^'])*)',(\d+),(\d+),'((?:\\.|[^'])*)'\.split\('\|'\)\)\)/g;
-  var output = "";
-  var match;
-  var decodedCount = 0;
-
-  while ((match = pattern.exec(text)) !== null && decodedCount < 4) {
-    var payload = unescapePackedString(match[1]);
-    var radix = parseInt(match[2], 10);
-    var count = parseInt(match[3], 10);
-    var keys = unescapePackedString(match[4]).split("|");
-    if (radix < 2 || radix > 36 || count > 2000 || payload.length > 250000) continue;
-
-    while (count--) {
-      if (!keys[count]) continue;
-      payload = payload.replace(new RegExp("\\b" + count.toString(radix) + "\\b", "g"), keys[count]);
+function unpackDeanEdwards(src) {
+  var text = String(src || "");
+  var pat = /eval\(function\(p,a,c,k,e,d\)\{[\s\S]*?\}\('((?:\\.|[^'])*)',(\d+),(\d+),'((?:\\.|[^'])*)'\.split\('\|'\)\)\)/g;
+  var out = "";
+  var m;
+  var count = 0;
+  while ((m = pat.exec(text)) !== null && count < 4) {
+    var payload = unescapePackedString(m[1]);
+    var radix = parseInt(m[2], 10);
+    var c = parseInt(m[3], 10);
+    var keys = unescapePackedString(m[4]).split("|");
+    if (radix < 2 || radix > 36 || c > 2000 || payload.length > 250000) continue;
+    while (c--) {
+      if (!keys[c]) continue;
+      payload = payload.replace(new RegExp("\\b" + c.toString(radix) + "\\b", "g"), keys[c]);
     }
-    output += "\n" + payload;
-    decodedCount++;
+    out += "\n" + payload;
+    count++;
   }
-  return output;
+  return out;
 }
 
 function mediaEntriesFromHtml(html) {
-  var normalized = cleanUrlValue(html);
-  var unpacked = unpackDeanEdwards(html);
-  if (unpacked) normalized += "\n" + cleanUrlValue(unpacked);
-
+  var norm = cleanUrlValue(html);
+  var up = unpackDeanEdwards(html);
+  if (up) norm += "\n" + cleanUrlValue(up);
   var entries = [];
   var seen = {};
-
-  function add(urlValue, labelValue) {
-    var url = cleanUrlValue(urlValue).replace(/[),;]+$/, "");
+  function add(u, l) {
+    var url = cleanUrlValue(u).replace(/[),;]+$/, "");
     if (!directMedia(url) || seen[url]) return;
     seen[url] = true;
-    entries.push({ url: url, quality: qualityFromText(labelValue) || qualityFromText(url) });
+    entries.push({ url: url, quality: qualityFromText(l) || qualityFromText(url) });
   }
-
-  var pairedPatterns = [
+  var pats = [
     /(?:file|src|source|hls|playlist|url)\s*:\s*["'](https?:[^"']+?\.(?:m3u8|mp4)(?:\?[^"']*)?)["']\s*(?:,\s*label\s*:\s*["']([^"']+)["'])?/gi,
     /["'](?:file|src|source|hls|playlist|url)["']\s*:\s*["'](https?:[^"']+?\.(?:m3u8|mp4)(?:\?[^"']*)?)["']\s*(?:,\s*["']label["']\s*:\s*["']([^"']+)["'])?/gi
   ];
-
-  for (var p = 0; p < pairedPatterns.length; p++) {
-    var paired = pairedPatterns[p];
-    var pairedMatch;
-    while ((pairedMatch = paired.exec(normalized)) !== null) add(pairedMatch[1], pairedMatch[2] || "");
+  for (var p = 0; p < pats.length; p++) {
+    var pat = pats[p];
+    var m;
+    while ((m = pat.exec(norm)) !== null) add(m[1], m[2] || "");
   }
-
-  var generic = /https?:\/\/[^"'\\\s<>]+?\.(?:m3u8|mp4)(?:\?[^"'\\\s<>]*)?/gi;
-  var genericMatch;
-  while ((genericMatch = generic.exec(normalized)) !== null) add(genericMatch[0], "");
+  var gen = /https?:\/\/[^"'\\\s<>]+?\.(?:m3u8|mp4)(?:\?[^"'\\\s<>]*)?/gi;
+  var gm;
+  while ((gm = gen.exec(norm)) !== null) add(gm[0], "");
   return entries;
 }
 
-function supportedDirectEmbed(url) {
-  return /^https?:\/\/[^\/]*(?:cdnplus\.space|mp4plus\.cyou|anafast\.cyou|vidoba\.cyou|vidspeed\.space|larhu\.website)\//i.test(String(url || ""));
-}
+function supportedDirectEmbed(u) { return /^https?:\/\/[^\/]*(?:cdnplus\.space|mp4plus\.cyou|anafast\.cyou|vidoba\.cyou|vidspeed\.space|larhu\.website)\//i.test(String(u || "")); }
 
-function dailymotionId(url) {
-  var value = String(url || "");
-  var match = value.match(/dailymotion\.com\/(?:embed\/)?video\/([A-Za-z0-9]+)/i);
-  if (!match) match = value.match(/dai\.ly\/([A-Za-z0-9]+)/i);
-  return match ? match[1] : "";
+function dailymotionId(u) {
+  var v = String(u || "");
+  var m = v.match(/dailymotion\.com\/(?:embed\/)?video\/([A-Za-z0-9]+)/i);
+  if (!m) m = v.match(/dai\.ly\/([A-Za-z0-9]+)/i);
+  return m ? m[1] : "";
 }
 
 function primaryServerEmbed(html, serverUrl) {
   var $ = cheerio.load(html);
-  var node = $(".aplr-player-content iframe#iframe[src], .video-con iframe#iframe[src], iframe#iframe[src]").first();
-  var url = absUrl(node.attr("src"), serverUrl);
+  var n = $(".aplr-player-content iframe#iframe[src], .video-con iframe#iframe[src], iframe#iframe[src]").first();
+  var url = absUrl(n.attr("src"), serverUrl);
   if (!url || urlKey(url) === urlKey(serverUrl)) return "";
   return url;
 }
@@ -975,78 +597,55 @@ function collectAnaServers(html, playerUrl) {
   var $ = cheerio.load(html);
   var servers = [];
   var seen = {};
-  var playerOrigin = originOf(playerUrl);
-  var playerPath = pathKey(playerUrl);
-
-  $('a.aplr-link[href*="?serv="], a[href*="?serv="]').each(function (_, element) {
-    var anchor = wrap($, element);
-    var url = absUrl(anchor.attr("href"), playerUrl);
-    if (!url || originOf(url) !== playerOrigin || pathKey(url) !== playerPath || seen[url]) return;
-    var servMatch = url.match(/[?&]serv=(\d+)/i);
-    if (!servMatch) return;
+  var po = originOf(playerUrl);
+  var pp = pathKey(playerUrl);
+  $('a.aplr-link[href*="?serv="], a[href*="?serv="]').each(function (_, el) {
+    var a = wrap($, el);
+    var url = absUrl(a.attr("href"), playerUrl);
+    if (!url || originOf(url) !== po || pathKey(url) !== pp || seen[url]) return;
+    if (!url.match(/[?&]serv=(\d+)/i)) return;
     seen[url] = true;
-    servers.push({
-      url: url,
-      label: (anchor.text() || "Server " + servMatch[1]).replace(/\s+/g, " ").trim()
-    });
+    servers.push({ url: url, label: (a.text() || "Server").replace(/\s+/g, " ").trim() });
   });
-
   return servers.slice(0, MAX_SERVERS);
 }
 
 function addMediaEntry(entry, referer, serverName, streams, seenStreams) {
   var url = entry && entry.url ? entry.url : "";
   if (!url || seenStreams[url]) return Promise.resolve();
-  var declaredQuality = entry.quality || qualityFromText(serverName) || qualityFromText(url);
-
-  if (declaredQuality && declaredQuality !== "1080p") {
-    return Promise.resolve();
-  }
-
+  var dq = entry.quality || qualityFromText(serverName) || qualityFromText(url);
+  if (dq && dq !== "1080p") return Promise.resolve();
   if (!/\.m3u8(?:[?#]|$)/i.test(url)) {
-    if (!declaredQuality) return Promise.resolve();
+    if (!dq) return Promise.resolve();
     seenStreams[url] = true;
-    streams.push(streamObject(url, referer, declaredQuality, serverName));
+    streams.push(streamObject(url, referer, dq, serverName));
     return Promise.resolve();
   }
-
-  var encodedVariants = variantsFromEncodedMaster(url);
-  if (encodedVariants.length) {
+  var ev = variantsFromEncodedMaster(url);
+  if (ev.length) {
     seenStreams[url] = true;
     if (!reliableHlsSource(url, referer, serverName)) return Promise.resolve();
-    for (var encodedIndex = 0; encodedIndex < encodedVariants.length; encodedIndex++) {
-      var encoded = encodedVariants[encodedIndex];
-      if (seenStreams[encoded.url]) continue;
-      seenStreams[encoded.url] = true;
-      streams.push(streamObject(encoded.url, referer, encoded.quality, serverName));
+    for (var i = 0; i < ev.length; i++) {
+      if (seenStreams[ev[i].url]) continue;
+      seenStreams[ev[i].url] = true;
+      streams.push(streamObject(ev[i].url, referer, ev[i].quality, serverName));
     }
     return Promise.resolve();
   }
-
-  if (!reliableHlsSource(url, referer, serverName)) {
-    seenStreams[url] = true;
-    return Promise.resolve();
-  }
-
-  return fetchTextInfo(
-    url,
-    referer,
-    originOf(referer),
-    "application/vnd.apple.mpegurl,application/x-mpegURL,text/plain,*/*"
-  ).then(function (result) {
-    var variants = parseHlsMaster(result.html, url);
-    if (!variants.length) {
-      if (declaredQuality && !isMasterPlaylistUrl(url) && isHlsPlaylistText(result.html) && !seenStreams[url]) {
+  if (!reliableHlsSource(url, referer, serverName)) { seenStreams[url] = true; return Promise.resolve(); }
+  return fetchTextInfo(url, referer, originOf(referer), "application/vnd.apple.mpegurl,application/x-mpegURL,text/plain,*/*").then(function (r) {
+    var vs = parseHlsMaster(r.html, url);
+    if (!vs.length) {
+      if (dq && !isMasterPlaylistUrl(url) && isHlsPlaylistText(r.html) && !seenStreams[url]) {
         seenStreams[url] = true;
-        streams.push(streamObject(url, referer, declaredQuality, serverName));
+        streams.push(streamObject(url, referer, dq, serverName));
       }
       return;
     }
-
-    for (var i = 0; i < variants.length; i++) {
-      if (variants[i].quality !== "1080p" || seenStreams[variants[i].url]) continue;
-      seenStreams[variants[i].url] = true;
-      streams.push(streamObject(variants[i].url, referer, variants[i].quality, serverName));
+    for (var i = 0; i < vs.length; i++) {
+      if (vs[i].quality !== "1080p" || seenStreams[vs[i].url]) continue;
+      seenStreams[vs[i].url] = true;
+      streams.push(streamObject(vs[i].url, referer, vs[i].quality, serverName));
     }
   }).catch(function () {});
 }
@@ -1054,64 +653,40 @@ function addMediaEntry(entry, referer, serverName, streams, seenStreams) {
 function resolveDailymotion(url, referer, serverName, streams, seenStreams) {
   var id = dailymotionId(url);
   if (!id) return Promise.resolve();
-
-  return fetchJson("https://www.dailymotion.com/player/metadata/video/" + id, referer, originOf(referer))
-    .then(function (data) {
-      var jobs = [];
-      var qualities = data && data.qualities ? data.qualities : {};
-      var keys = Object.keys(qualities);
-      for (var i = 0; i < keys.length; i++) {
-        var list = qualities[keys[i]] || [];
-        for (var j = 0; j < list.length; j++) {
-          if (!list[j] || !list[j].url) continue;
-          var q = qualityFromText(keys[i]);
-          if (q !== "1080p") continue;
-          jobs.push(addMediaEntry(
-            { url: list[j].url, quality: q },
-            url,
-            serverName,
-            streams,
-            seenStreams
-          ));
-        }
+  return fetchJson("https://www.dailymotion.com/player/metadata/video/" + id, referer, originOf(referer)).then(function (data) {
+    var jobs = [];
+    var qs = data && data.qualities ? data.qualities : {};
+    var keys = Object.keys(qs);
+    for (var i = 0; i < keys.length; i++) {
+      var list = qs[keys[i]] || [];
+      for (var j = 0; j < list.length; j++) {
+        if (!list[j] || !list[j].url) continue;
+        var q = qualityFromText(keys[i]);
+        if (q !== "1080p") continue;
+        jobs.push(addMediaEntry({ url: list[j].url, quality: q }, url, serverName, streams, seenStreams));
       }
-      if (!jobs.length && data && data.stream_hls_url) {
-        jobs.push(addMediaEntry({ url: data.stream_hls_url, quality: "" }, url, serverName, streams, seenStreams));
-      }
-      return Promise.all(jobs);
-    }).catch(function () {});
+    }
+    if (!jobs.length && data && data.stream_hls_url) jobs.push(addMediaEntry({ url: data.stream_hls_url, quality: "" }, url, serverName, streams, seenStreams));
+    return Promise.all(jobs);
+  }).catch(function () {});
 }
 
 function resolveEmbedTarget(target, expected, streams, seenStreams) {
   if (!target || !target.url) return Promise.resolve();
   var url = target.url;
-
-  if (directMedia(url)) {
-    return addMediaEntry({ url: url, quality: qualityFromText(url) }, target.referer, target.label, streams, seenStreams);
-  }
-  if (dailymotionId(url)) {
-    return resolveDailymotion(url, target.referer, target.label, streams, seenStreams);
-  }
+  if (directMedia(url)) return addMediaEntry({ url: url, quality: qualityFromText(url) }, target.referer, target.label, streams, seenStreams);
+  if (dailymotionId(url)) return resolveDailymotion(url, target.referer, target.label, streams, seenStreams);
   if (!supportedDirectEmbed(url)) return Promise.resolve();
-
-  return fetchTextInfo(url, target.referer, originOf(target.referer)).then(function (result) {
-    var explicit = explicitSeasonEpisode(result.html + " " + result.url);
+  return fetchTextInfo(url, target.referer, originOf(target.referer)).then(function (r) {
+    var explicit = explicitSeasonEpisode(r.html + " " + r.url);
     var siteEp = siteEpisodeNumber(expected.season, expected.episode);
     if (explicit) {
-      if (explicit.season !== expected.season) {
-        logFailure("player_identity_mismatch", target.label + " S" + explicit.season);
-        return;
-      }
-      if (explicit.episode !== expected.episode && explicit.episode !== siteEp) {
-        logFailure("player_identity_mismatch", target.label + " E" + explicit.episode);
-        return;
-      }
+      if (explicit.season !== expected.season) { logFailure("player_identity_mismatch", target.label + " S" + explicit.season); return; }
+      if (explicit.episode !== expected.episode && explicit.episode !== siteEp) { logFailure("player_identity_mismatch", target.label + " E" + explicit.episode); return; }
     }
-    var entries = mediaEntriesFromHtml(result.html);
+    var es = mediaEntriesFromHtml(r.html);
     var jobs = [];
-    for (var i = 0; i < entries.length; i++) {
-      jobs.push(addMediaEntry(entries[i], result.url, target.label, streams, seenStreams));
-    }
+    for (var i = 0; i < es.length; i++) jobs.push(addMediaEntry(es[i], r.url, target.label, streams, seenStreams));
     return Promise.all(jobs);
   }).catch(function () {});
 }
@@ -1120,179 +695,107 @@ function resolveAnaPlayer(playerUrl, episodeUrl, wantedSeason, wantedEpisode) {
   var streams = [];
   var seenStreams = {};
   var siteEp = siteEpisodeNumber(wantedSeason, wantedEpisode);
-
   return fetchTextInfo(playerUrl, episodeUrl, originOf(episodeUrl)).then(function (player) {
     var explicit = explicitSeasonEpisode(player.url + " " + player.html);
     if (explicit) {
-      if (explicit.season !== wantedSeason) {
-        logFailure("player_identity_mismatch", "AnaPlayer S" + explicit.season);
-        return [];
-      }
-      if (explicit.episode !== wantedEpisode && explicit.episode !== siteEp) {
-        logFailure("player_identity_mismatch", "AnaPlayer E" + explicit.episode);
-        return [];
-      }
+      if (explicit.season !== wantedSeason) { logFailure("player_identity_mismatch", "AnaPlayer S" + explicit.season); return []; }
+      if (explicit.episode !== wantedEpisode && explicit.episode !== siteEp) { logFailure("player_identity_mismatch", "AnaPlayer E" + explicit.episode); return []; }
     }
-
     var servers = collectAnaServers(player.html, player.url);
     if (!servers.length) {
-      var fallbackEmbed = primaryServerEmbed(player.html, player.url);
-      if (fallbackEmbed) {
-        servers.push({ url: player.url, label: "Main", inlineEmbed: fallbackEmbed });
-      }
+      var fb = primaryServerEmbed(player.html, player.url);
+      if (fb) servers.push({ url: player.url, label: "Main", inlineEmbed: fb });
     }
-
-    var serverJobs = [];
+    var sJobs = [];
     for (var i = 0; i < servers.length; i++) {
-      (function (server) {
-        if (server.inlineEmbed) {
-          serverJobs.push(Promise.resolve({
-            url: server.inlineEmbed,
-            label: server.label,
-            referer: server.url
-          }));
-          return;
-        }
-        serverJobs.push(
-          fetchTextInfo(server.url, player.url, originOf(player.url)).then(function (serverPage) {
-            var embed = primaryServerEmbed(serverPage.html, serverPage.url);
-            if (!embed) return null;
-            return { url: embed, label: server.label, referer: serverPage.url };
-          }).catch(function () { return null; })
-        );
+      (function (s) {
+        if (s.inlineEmbed) { sJobs.push(Promise.resolve({ url: s.inlineEmbed, label: s.label, referer: s.url })); return; }
+        sJobs.push(fetchTextInfo(s.url, player.url, originOf(player.url)).then(function (sp) {
+          var e = primaryServerEmbed(sp.html, sp.url);
+          if (!e) return null;
+          return { url: e, label: s.label, referer: sp.url };
+        }).catch(function () { return null; }));
       })(servers[i]);
     }
-
-    return Promise.all(serverJobs).then(function (resolvedTargets) {
+    return Promise.all(sJobs).then(function (rt) {
       var targets = [];
-      var seenTargets = {};
-      for (var t = 0; t < resolvedTargets.length; t++) {
-        var target = resolvedTargets[t];
-        if (!target || !target.url || seenTargets[target.url]) continue;
-        seenTargets[target.url] = true;
-        targets.push(target);
-        log("server", target.label);
+      var st = {};
+      for (var t = 0; t < rt.length; t++) {
+        if (!rt[t] || !rt[t].url || st[rt[t].url]) continue;
+        st[rt[t].url] = true;
+        targets.push(rt[t]);
+        log("server", rt[t].label);
       }
-
       var jobs = [];
       var expected = { season: wantedSeason, episode: wantedEpisode };
-      for (var j = 0; j < targets.length; j++) {
-        jobs.push(resolveEmbedTarget(targets[j], expected, streams, seenStreams));
-      }
+      for (var j = 0; j < targets.length; j++) jobs.push(resolveEmbedTarget(targets[j], expected, streams, seenStreams));
       return Promise.all(jobs).then(function () { return streams; });
     });
-  }).catch(function (error) {
-    if (errorMessage(error).indexOf("cloudflare_challenge") === 0) {
-      logFailure("cloudflare_challenge", originOf(playerUrl));
-    }
+  }).catch(function (e) {
+    if (errorMessage(e).indexOf("cloudflare_challenge") === 0) logFailure("cloudflare_challenge", originOf(playerUrl));
     return [];
   });
 }
 
-function resolvePlayer(verifiedEpisode) {
-  if (directMedia(verifiedEpisode.playerUrl)) {
+function resolvePlayer(verified) {
+  if (directMedia(verified.playerUrl)) {
     var streams = [];
     var seen = {};
-    return addMediaEntry(
-      { url: verifiedEpisode.playerUrl, quality: qualityFromText(verifiedEpisode.playerUrl) },
-      verifiedEpisode.episodeUrl,
-      "Main",
-      streams,
-      seen
-    ).then(function () { return streams; });
+    return addMediaEntry({ url: verified.playerUrl, quality: qualityFromText(verified.playerUrl) }, verified.episodeUrl, "Main", streams, seen).then(function () { return streams; });
   }
-
-  if (anaPlayerAllowed(verifiedEpisode.playerUrl)) {
-    return resolveAnaPlayer(
-      verifiedEpisode.playerUrl,
-      verifiedEpisode.episodeUrl,
-      verifiedEpisode.season,
-      verifiedEpisode.episode
-    );
-  }
+  if (anaPlayerAllowed(verified.playerUrl)) return resolveAnaPlayer(verified.playerUrl, verified.episodeUrl, verified.season, verified.episode);
   return Promise.resolve([]);
 }
 
 function sortStreams(streams) {
-  return (streams || []).sort(function (left, right) {
-    var qualityDelta = qualityRank(right.quality || "") - qualityRank(left.quality || "");
-    if (qualityDelta) return qualityDelta;
-    return String(left.title || "").localeCompare(String(right.title || ""));
+  return (streams || []).sort(function (l, r) {
+    var d = qualityRank(r.quality || "") - qualityRank(l.quality || "");
+    if (d) return d;
+    return String(l.title || "").localeCompare(String(r.title || ""));
   });
 }
 
 function getStreams(tmdbId, mediaType, season, episode) {
   var type = String(mediaType || "").toLowerCase();
-  var wantedSeason = parseInt(season, 10);
-  var wantedEpisode = parseInt(episode, 10);
+  var ws = parseInt(season, 10);
+  var we = parseInt(episode, 10);
   var id = String(tmdbId || "").trim();
-
   if (type !== "tv" && type !== "series" && type !== "show") return Promise.resolve([]);
-  if (!/^\d+$/.test(id) || !wantedSeason || !wantedEpisode || wantedSeason < 1 || wantedEpisode < 1) {
-    logFailure("invalid_request", "tmdb_or_episode");
-    return Promise.resolve([]);
-  }
-
+  if (!/^\d+$/.test(id) || !ws || !we || ws < 1 || we < 1) { logFailure("invalid_request", "tmdb_or_episode"); return Promise.resolve([]); }
   log("tmdb_id", id);
-  log("request", "S" + wantedSeason + "E" + wantedEpisode);
+  log("request", "S" + ws + "E" + we);
 
-  /* NEW: compute cumulative episode offset from TMDB before anything else. */
-  return computeCumulativeEpisodes(id, wantedSeason).then(function (offset) {
+  return computeCumulativeEpisodes(id, ws).then(function (offset) {
     _cumulativeEpisodeOffset = offset;
-    log("site_episode", siteEpisodeNumber(wantedSeason, wantedEpisode) +
-        " (offset=" + offset + ")");
-
-    var context = { metadata: null, series: null, episodeCandidate: null, verifiedEpisode: null };
-
-    return getTmdbMetadata(id)
-      .then(function (metadata) {
-        context.metadata = metadata;
-        log("titles", metadata.titles.join(" | "));
-        if (!metadata.titles.length) {
-          logFailure("tmdb_metadata_not_found");
-          return null;
-        }
-        return resolveSeries(metadata);
-      })
-      .then(function (series) {
-        if (!series) {
-          logFailure("series_not_found");
-          return null;
-        }
-        context.series = series;
-        log("matched_series", series.url);
-        context.episodeCandidate = findExactEpisode(series, wantedSeason, wantedEpisode);
-        if (!context.episodeCandidate) {
-          logFailure("episode_not_found", "S" + wantedSeason + "E" + wantedEpisode);
-          return null;
-        }
-        return verifyEpisodePage(series, context.episodeCandidate, wantedSeason, wantedEpisode);
-      })
-      .then(function (verifiedEpisode) {
-        if (!verifiedEpisode) return [];
-        context.verifiedEpisode = verifiedEpisode;
-        log("episode_url", verifiedEpisode.episodeUrl);
-        log("player_url", verifiedEpisode.playerUrl);
-        return resolvePlayer(verifiedEpisode);
-      })
-      .then(function (streams) {
-        var filtered = (streams || []).filter(function (s) {
-          return (s.quality || "") === "1080p";
-        });
-        var sorted = sortStreams(filtered);
-        if (!sorted.length) logFailure("no_1080p_sources");
-        for (var i = 0; i < sorted.length; i++) {
-          log("quality", sorted[i].quality || "unannounced");
-        }
-        log("streams_found", sorted.length);
-        return sorted;
-      })
-      .catch(function (error) {
-        var message = errorMessage(error);
-        if (message.indexOf("cloudflare_challenge") === 0) logFailure("cloudflare_challenge");
-        else logFailure("fatal", message);
-        return [];
-      });
+    log("site_episode", siteEpisodeNumber(ws, we) + " (offset=" + offset + ")");
+    return getTmdbMetadata(id).then(function (metadata) {
+      log("titles", metadata.titles.join(" | "));
+      if (!metadata.titles.length) { logFailure("tmdb_metadata_not_found"); return null; }
+      return resolveSeries(metadata);
+    }).then(function (series) {
+      if (!series) { logFailure("series_not_found"); return null; }
+      log("matched_series", series.url);
+      var cand = findExactEpisode(series, ws, we);
+      if (!cand) { logFailure("episode_not_found", "S" + ws + "E" + we); return null; }
+      return verifyEpisodePage(series, cand, ws, we);
+    }).then(function (ve) {
+      if (!ve) return [];
+      log("episode_url", ve.episodeUrl);
+      log("player_url", ve.playerUrl);
+      return resolvePlayer(ve);
+    }).then(function (streams) {
+      var filtered = (streams || []).filter(function (s) { return (s.quality || "") === "1080p"; });
+      var sorted = sortStreams(filtered);
+      if (!sorted.length) logFailure("no_1080p_sources");
+      for (var i = 0; i < sorted.length; i++) log("quality", sorted[i].quality || "unannounced");
+      log("streams_found", sorted.length);
+      return sorted;
+    }).catch(function (e) {
+      var m = errorMessage(e);
+      if (m.indexOf("cloudflare_challenge") === 0) logFailure("cloudflare_challenge");
+      else logFailure("fatal", m);
+      return [];
+    });
   });
 }
 
