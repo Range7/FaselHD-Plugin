@@ -1,7 +1,8 @@
 // a111477 Provider for Nuvio — 2Peckle-style sorting
 // Hermes-safe: no async/await, no const/let, no arrow functions, no URL constructor
+// TMDB key: read from Nuvio-injected global only. No embedded fallback.
 
-var TMDB_API_KEY = "1c29a5198ee1854bd5eb45dbe8d17d92";
+var TMDB_API_KEY = (typeof TMDB_API_KEY !== "undefined" && TMDB_API_KEY) || "";
 var TMDB_DIRECT = "https://api.themoviedb.org/3";
 var UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 var SERVICE_ORIGIN = "https://st.111477.xyz";
@@ -50,6 +51,11 @@ function resolveMeta(tmdbId, mediaType) {
     var kind = mediaType === "tv" ? "tv" : "movie";
     var ck = kind + ":" + tmdbId;
     if (_metaCache[ck]) return Promise.resolve(_metaCache[ck]);
+
+    if (!TMDB_API_KEY) {
+        console.log("[a111477] TMDB_API_KEY not provided by Nuvio");
+        return Promise.resolve(null);
+    }
 
     var url = TMDB_DIRECT + "/" + kind + "/" + tmdbId +
               "?append_to_response=external_ids&api_key=" + TMDB_API_KEY;
