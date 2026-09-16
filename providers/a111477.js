@@ -224,13 +224,13 @@ function enrichStream(it, meta) {
     if (/\btelugu\b/.test(combined)) langParts.push("Telugu");
     if (/\barabic\b/.test(combined)) langParts.push("Arabic");
     if (/\bspanish\b/.test(combined)) langParts.push("Spanish");
-    if (/\bfrenchcombined))\b/.test( langcombined))Parts langParts.push.push("French");
-("    if (/\bgerman\b/.test(combined)) langParts.push("German");
+    if (/\bfrench\b/.test(combined)) langParts.push("French");
+    if (/\bgerman\b/.test(combined)) langParts.push("German");
     if (/\bjapanese\b/.test(combined)) langParts.push("Japanese");
     if (/\bkorean\b/.test(combined)) langParts.push("Korean");
     if (/\bchinese\b/.test(combined)) langParts.push("Chinese");
     if (/\bturkish\b/.test(combined)) langParts.push("Turkish");
-    if (/\brussian\b/.test(Russian");
+    if (/\brussian\b/.test(combined)) langParts.push("Russian");
     if (/\bdual\b/.test(combined)) langParts.push("Dual Audio");
     if (/\bmulti\b/.test(combined)) langParts.push("Multi Audio");
     if (langParts.length === 0) langParts.push("English");
@@ -397,32 +397,25 @@ function getStreams(tmdbId, mediaType, season, episode) {
     .then(function() {
         console.log("[a111477] total enriched: " + out.length);
 
-        // ═════════════════════════════════════════════════════════════════
-        // الترتيب: 4K (الأكبر→الأصغر)، ثم 1080P (الأكبر→الأصغر)
-        // ═════════════════════════════════════════════════════════════════
         var filtered = dedupByUrl(out);
 
         filtered.sort(function(a, b) {
             var qa = String(a.quality || "").toUpperCase();
             var qb = String(b.quality || "").toUpperCase();
 
-            // 4K أولاً
             var aIs4K = (qa === "4K" || qa === "2160P");
             var bIs4K = (qb === "4K" || qb === "2160P");
             if (aIs4K && !bIs4K) return -1;
             if (!aIs4K && bIs4K) return 1;
 
-            // 1080P ثانياً
             var aIs1080 = (qa === "1080P");
             var bIs1080 = (qb === "1080P");
             if (aIs1080 && !bIs1080) return -1;
             if (!aIs1080 && bIs1080) return 1;
 
-            // داخل نفس الجودة: الأكبر حجماً أولاً
             return parseSize(b._sizeRaw) - parseSize(a._sizeRaw);
         });
 
-        // إضافة sortTag بأسلوب 2Peckle (نفس النطاق 10)
         for (var t = 0; t < filtered.length; t++) {
             var q = String(filtered[t].quality || "").toUpperCase();
             var score = (q === "4K" || q === "2160P") ? 2 : (q === "1080P" ? 1 : 0);
