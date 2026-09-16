@@ -1,6 +1,7 @@
 // Cinemana Scraper for Nuvio Local Scrapers
 // Nuvio-native: uses metadata passed by Nuvio, no hardcoded TMDB key
-// FAST: parallel SUB/DUB search | Multi-language | 1080p only
+// Quality tiers: 4K > 1080p
+// FAST: parallel SUB/DUB search | Multi-language | Hermes-safe
 
 var __async = (__this, __arguments, generator) => {
   return new Promise((resolve, reject) => {
@@ -14,7 +15,7 @@ var __async = (__this, __arguments, generator) => {
 var CINEMANA_BASE = "https://cinemana.shabakaty.com/api/android";
 
 // ─── Nuvio's internal TMDB proxy (لا يحتاج مفتاح) ─────
-// Nuvio exposes a metadata gateway. Adjust the base if your version differs.
+// عدّل الرابط ده لو نسخة Nuvio عندك بتستخدم gateway مختلف
 var NUVIO_TMDB_BASE = "https://api.nuvio.app/tmdb";
 
 var UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36";
@@ -44,8 +45,19 @@ function removeDubWords(str) {
 }
 
 function cleanUrl(url) { return url ? url.replace(/\\/g, "") : ""; }
-function is1080p(q) { return q ? q.toString().toLowerCase().indexOf("1080") !== -1 : false; }
 function isDubbedTitle(t) { if (!t) return false; t = t.toLowerCase(); return t.indexOf("مدبلج") !== -1 || t.indexOf("dubbed") !== -1 || t.indexOf("dub") !== -1 || t.indexOf("مدبلجة") !== -1; }
+
+// ─── Quality detection: 4K > 1080p ─────────────────────
+function detectQualityTier(name, url) {
+  var s = ((name || "") + " " + (url || "")).toLowerCase();
+
+  var has4K = /(2160|4k|uhd)/i.test(s);
+  var has1080 = /(1080|fhd|full ?hd)/i.test(s);
+
+  if (has4K) return { tier: 2, label: "4K" };
+  if (has1080) return { tier: 1, label: "1080p" };
+  return null;
+}
 
 function strictMatchScore(a, b) {
   var na = normalizeTitle(a), nb = normalizeTitle(b);
@@ -64,8 +76,6 @@ function strictMatchScore(a, b) {
 }
 
 // ─── Extract metadata from Nuvio context ────────────────
-// Nuvio passes a `metadata` object as the 5th argument in recent versions.
-// If your Nuvio does not, it may expose a global `nuvioMetadata` object.
 function extractFromNuvioContext(metadata) {
   var src = metadata || (typeof globalThis !== "undefined" && globalThis.nuvioMetadata) || null;
   if (!src) return null;
@@ -75,7 +85,6 @@ function extractFromNuvioContext(metadata) {
     if (t && typeof t === "string" && titles.indexOf(t) === -1) titles.push(t);
   };
 
-  // Nuvio commonly exposes these fields
   pushTitle(src.title);
   pushTitle(src.name);
   pushTitle(src.originalTitle);
@@ -83,7 +92,6 @@ function extractFromNuvioContext(metadata) {
   pushTitle(src.original_title);
   pushTitle(src.original_name);
 
-  // Alternative titles array
   if (Array.isArray(src.alternativeTitles)) {
     for (var i = 0; i < src.alternativeTitles.length; i++) {
       var alt = src.alternativeTitles[i];
@@ -104,8 +112,6 @@ function extractFromNuvioContext(metadata) {
 }
 
 // ─── Fallback: Nuvio's internal TMDB proxy ──────────────
-// If Nuvio doesn't pass metadata, we use its TMDB gateway.
-// No API key needed — Nuvio handles auth internally.
 function getTMDBInfoViaNuvio(tmdbId, mediaType) {
   return __async(this, null, function* () {
     var type = mediaType === "movie" ? "movie" : "tv";
@@ -127,7 +133,6 @@ function getTMDBInfoViaNuvio(tmdbId, mediaType) {
       if (titleEn) titles.push(titleEn);
       if (origTitle && origTitle !== titleEn) titles.push(origTitle);
 
-      // Translations (included via append_to_response)
       if (d.translations && d.translations.translations) {
         var list = d.translations.translations;
         for (var i = 0; i < list.length; i++) {
@@ -139,7 +144,6 @@ function getTMDBInfoViaNuvio(tmdbId, mediaType) {
         }
       }
 
-      // Alternative titles
       if (d.alternative_titles) {
         var alts = d.alternative_titles.titles || d.alternative_titles.results || [];
         for (var j = 0; j < alts.length; j++) {
@@ -157,7 +161,7 @@ function getTMDBInfoViaNuvio(tmdbId, mediaType) {
   });
 }
 
-// ─── Cinemana API (untouched) ───────────────────────────
+// ─── Cinemana API ───────────────────────────────────────
 function searchCinemana(query, type) {
   return __async(this, null, function* () {
     try {
@@ -212,7 +216,7 @@ function extractSubtitles(info) {
   return out;
 }
 
-// ─── Search & Score (untouched) ─────────────────────────
+// ─── Search & Score ─────────────────────────────────────
 function searchAndScore(tmdbInfo, mediaType, requireDubbed) {
   return __async(this, null, function* () {
     var searchType = mediaType === "movie" ? "movie" : "series";
@@ -291,11 +295,11 @@ function searchAndScore(tmdbInfo, mediaType, requireDubbed) {
   });
 }
 
-// ─── Get streams from match (untouched) ─────────────────
+// ─── Get streams from match ─────────────────────────────
 function getStreamsFromMatch(match, mediaType, season, episode) {
   return __async(this, null, function* () {
     var streams = [];
-    var label = match.isDubbed ? "Cinemana | مدبلج عربي" : "Cinemana | مترجم";
+    var baseLabel = match.isDubbed ? "Cinemana | مدبلج عربي" : "Cinemana | مترجم";
     var targetId = match.id;
 
     if (mediaType !== "movie") {
@@ -320,27 +324,46 @@ function getStreamsFromMatch(match, mediaType, season, episode) {
     for (var i = 0; i < qualities.length; i++) {
       var q = qualities[i];
       if (!q.videoUrl) continue;
-      var qName = q.resolution || q.name || "";
-      if (!is1080p(qName)) continue;
-      var stream = { name: label, title: "1080p", url: cleanUrl(q.videoUrl), quality: qName };
+
+      var qName = q.resolution || q.name || q.quality || "";
+      var url = cleanUrl(q.videoUrl);
+
+      var tier = detectQualityTier(qName, url);
+      if (!tier) continue; // تجاهل أي حاجة أقل من 1080p
+
+      var stream = {
+        name: baseLabel,
+        title: tier.label,
+        url: url,
+        quality: tier.label,
+        _tier: tier.tier
+      };
       if (!match.isDubbed && subs.length > 0) stream.subtitles = subs;
       streams.push(stream);
     }
+
+    // الترتيب: 4K (2) ← 1080p (1)
+    streams.sort(function(a, b) { return b._tier - a._tier; });
+
+    for (var s = 0; s < streams.length; s++) delete streams[s]._tier;
+
+    console.log("[Cinemana] " + (match.isDubbed ? "DUB" : "SUB") + " returned " + streams.length + " stream(s)");
+
     return streams;
   });
 }
 
-// ─── Main: now accepts metadata from Nuvio ──────────────
+// ─── Main ───────────────────────────────────────────────
 function getStreams(tmdbId, mediaType, season, episode, metadata) {
   return __async(this, null, function* () {
     var t0 = Date.now();
     console.log("[Cinemana] === " + mediaType + "/" + tmdbId + " S" + (season || "?") + "E" + (episode || "?") + " ===");
 
     try {
-      // 1) Try Nuvio metadata first — zero network cost
+      // 1) metadata من Nuvio (بدون شبكة)
       var tmdbInfo = extractFromNuvioContext(metadata);
 
-      // 2) Fallback: Nuvio's internal TMDB gateway (no API key needed)
+      // 2) fallback: بوابة Nuvio الداخلية
       if (!tmdbInfo || tmdbInfo.titles.length === 0) {
         console.log("[Cinemana] No metadata from Nuvio, using Nuvio TMDB proxy");
         tmdbInfo = yield getTMDBInfoViaNuvio(tmdbId, mediaType);
