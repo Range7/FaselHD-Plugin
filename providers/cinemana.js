@@ -1,7 +1,6 @@
 // Cinemana Scraper for Nuvio Local Scrapers
-// FAST: parallel TMDB, reduced queries, parallel SUB/DUB search
-// Multi-language | 1080p only | Verified Dub/Sub
-// React Native compatible (Hermes-safe, no async/await)
+// Nuvio-native: uses metadata passed by Nuvio, no hardcoded TMDB key
+// FAST: parallel SUB/DUB search | Multi-language | 1080p only
 
 var __async = (__this, __arguments, generator) => {
   return new Promise((resolve, reject) => {
@@ -13,10 +12,13 @@ var __async = (__this, __arguments, generator) => {
 };
 
 var CINEMANA_BASE = "https://cinemana.shabakaty.com/api/android";
-var TMDB_BASE = "https://api.themoviedb.org/3";
+
+// ─── Nuvio's internal TMDB proxy (لا يحتاج مفتاح) ─────
+// Nuvio exposes a metadata gateway. Adjust the base if your version differs.
+var NUVIO_TMDB_BASE = "https://api.nuvio.app/tmdb";
+
 var UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36";
 var FETCH_TIMEOUT = 8e3;
-var TMDB_API_KEY = "439c478a771f35c05022f9feabcca01c";
 
 function safeFetch(url, options, timeout) {
   var ms = timeout || FETCH_TIMEOUT;
@@ -61,22 +63,59 @@ function strictMatchScore(a, b) {
   return ratio >= 0.9 ? Math.round(75 + ratio * 15) : Math.round(ratio * 70);
 }
 
-// ─── TMDB: 2 parallel calls only ─────────────────────────
-function getTMDBInfo(tmdbId, mediaType) {
+// ─── Extract metadata from Nuvio context ────────────────
+// Nuvio passes a `metadata` object as the 5th argument in recent versions.
+// If your Nuvio does not, it may expose a global `nuvioMetadata` object.
+function extractFromNuvioContext(metadata) {
+  var src = metadata || (typeof globalThis !== "undefined" && globalThis.nuvioMetadata) || null;
+  if (!src) return null;
+
+  var titles = [];
+  var pushTitle = function(t) {
+    if (t && typeof t === "string" && titles.indexOf(t) === -1) titles.push(t);
+  };
+
+  // Nuvio commonly exposes these fields
+  pushTitle(src.title);
+  pushTitle(src.name);
+  pushTitle(src.originalTitle);
+  pushTitle(src.originalName);
+  pushTitle(src.original_title);
+  pushTitle(src.original_name);
+
+  // Alternative titles array
+  if (Array.isArray(src.alternativeTitles)) {
+    for (var i = 0; i < src.alternativeTitles.length; i++) {
+      var alt = src.alternativeTitles[i];
+      if (typeof alt === "string") pushTitle(alt);
+      else if (alt && alt.title) pushTitle(alt.title);
+    }
+  }
+
+  var year = "";
+  var dateStr = src.releaseDate || src.firstAirDate || src.release_date || src.first_air_date || "";
+  if (dateStr) year = String(dateStr).substring(0, 4);
+
+  return {
+    titles: titles,
+    originalLanguage: src.originalLanguage || src.original_language || "",
+    year: year
+  };
+}
+
+// ─── Fallback: Nuvio's internal TMDB proxy ──────────────
+// If Nuvio doesn't pass metadata, we use its TMDB gateway.
+// No API key needed — Nuvio handles auth internally.
+function getTMDBInfoViaNuvio(tmdbId, mediaType) {
   return __async(this, null, function* () {
     var type = mediaType === "movie" ? "movie" : "tv";
-    var urlMain = TMDB_BASE + "/" + type + "/" + tmdbId + "?api_key=" + TMDB_API_KEY + "&language=en-US";
-    var urlTrans = TMDB_BASE + "/" + type + "/" + tmdbId + "/translations?api_key=" + TMDB_API_KEY;
+    var url = NUVIO_TMDB_BASE + "/" + type + "/" + tmdbId + "?append_to_response=translations,alternative_titles&language=en-US";
 
     try {
-      // Fetch both in parallel
-      var [rMain, rTrans] = yield Promise.all([
-        safeFetch(urlMain),
-        safeFetch(urlTrans, null, 8e3)
-      ]);
+      var r = yield safeFetch(url, null, 8e3);
+      if (!r.ok) { console.log("[Cinemana] Nuvio TMDB proxy returned " + r.status); return null; }
+      var d = yield r.json();
 
-      if (!rMain.ok) { console.log("[Cinemana] TMDB main returned " + rMain.status); return null; }
-      var d = yield rMain.json();
       var titleEn = d.title || d.name || "";
       var origTitle = d.original_title || d.original_name || titleEn;
       var origLang = d.original_language || "en";
@@ -88,10 +127,9 @@ function getTMDBInfo(tmdbId, mediaType) {
       if (titleEn) titles.push(titleEn);
       if (origTitle && origTitle !== titleEn) titles.push(origTitle);
 
-      // Parse translations (all languages in one call!)
-      if (rTrans.ok) {
-        var dTrans = yield rTrans.json();
-        var list = dTrans.translations || [];
+      // Translations (included via append_to_response)
+      if (d.translations && d.translations.translations) {
+        var list = d.translations.translations;
         for (var i = 0; i < list.length; i++) {
           var t = list[i];
           if (t && t.data) {
@@ -101,31 +139,25 @@ function getTMDBInfo(tmdbId, mediaType) {
         }
       }
 
-      // For anime: try to get romaji from English alternative titles
-      if (origLang === "ja" && titles.length < 3) {
-        try {
-          var rAlt = yield safeFetch(TMDB_BASE + "/" + type + "/" + tmdbId + "/alternative_titles?api_key=" + TMDB_API_KEY, null, 6e3);
-          if (rAlt.ok) {
-            var dAlt = yield rAlt.json();
-            var alts = dAlt.results || dAlt.titles || [];
-            for (var i = 0; i < alts.length; i++) {
-              var a = alts[i].title || alts[i].name || "";
-              if (a && /[a-zA-Z]/.test(a) && titles.indexOf(a) === -1) titles.push(a);
-            }
-          }
-        } catch (e) {}
+      // Alternative titles
+      if (d.alternative_titles) {
+        var alts = d.alternative_titles.titles || d.alternative_titles.results || [];
+        for (var j = 0; j < alts.length; j++) {
+          var a = alts[j].title || alts[j].name || "";
+          if (a && titles.indexOf(a) === -1) titles.push(a);
+        }
       }
 
-      console.log("[Cinemana] TMDB titles (" + titles.length + "): " + titles.slice(0, 5).join(" | ") + (titles.length > 5 ? " ..." : ""));
+      console.log("[Cinemana] Nuvio TMDB titles (" + titles.length + "): " + titles.slice(0, 5).join(" | "));
       return { titles: titles, originalLanguage: origLang, year: year };
     } catch (e) {
-      console.log("[Cinemana] TMDB error: " + e.message);
+      console.log("[Cinemana] Nuvio TMDB error: " + e.message);
       return null;
     }
   });
 }
 
-// ─── Cinemana API ──────────────────────────────────────
+// ─── Cinemana API (untouched) ───────────────────────────
 function searchCinemana(query, type) {
   return __async(this, null, function* () {
     try {
@@ -180,14 +212,13 @@ function extractSubtitles(info) {
   return out;
 }
 
-// ─── Search & Score ─────────────────────────────────────
+// ─── Search & Score (untouched) ─────────────────────────
 function searchAndScore(tmdbInfo, mediaType, requireDubbed) {
   return __async(this, null, function* () {
     var searchType = mediaType === "movie" ? "movie" : "series";
     var isSeries = mediaType !== "movie";
     var isAnime = tmdbInfo.originalLanguage === "ja";
 
-    // Build only TOP 4 queries (fast!)
     var queries = [];
     for (var t = 0; t < Math.min(tmdbInfo.titles.length, 4); t++) {
       var title = tmdbInfo.titles[t];
@@ -209,14 +240,10 @@ function searchAndScore(tmdbInfo, mediaType, requireDubbed) {
 
     console.log("[Cinemana] " + (requireDubbed ? "DUB" : "SUB") + " queries: " + queries.join(" | "));
 
-    // Search all queries in parallel!
     var searchPromises = [];
-    for (var q = 0; q < queries.length; q++) {
-      searchPromises.push(searchCinemana(queries[q], searchType));
-    }
+    for (var q = 0; q < queries.length; q++) searchPromises.push(searchCinemana(queries[q], searchType));
     var resultsArrays = yield Promise.all(searchPromises);
 
-    // Deduplicate
     var allResults = [];
     var seenIds = {};
     for (var r = 0; r < resultsArrays.length; r++) {
@@ -229,7 +256,6 @@ function searchAndScore(tmdbInfo, mediaType, requireDubbed) {
 
     console.log("[Cinemana] " + (requireDubbed ? "DUB" : "SUB") + " unique results: " + allResults.length);
 
-    // Score
     var best = null, bestScore = 0;
     for (var i = 0; i < allResults.length; i++) {
       var item = allResults[i];
@@ -265,7 +291,7 @@ function searchAndScore(tmdbInfo, mediaType, requireDubbed) {
   });
 }
 
-// ─── Get streams ────────────────────────────────────────
+// ─── Get streams from match (untouched) ─────────────────
 function getStreamsFromMatch(match, mediaType, season, episode) {
   return __async(this, null, function* () {
     var streams = [];
@@ -285,7 +311,6 @@ function getStreamsFromMatch(match, mediaType, season, episode) {
       if (!targetId) return [];
     }
 
-    // Fetch video info + transcoded files in parallel
     var [qualities, info] = yield Promise.all([
       getTranscodedFiles(targetId),
       getVideoInfo(targetId)
@@ -305,23 +330,31 @@ function getStreamsFromMatch(match, mediaType, season, episode) {
   });
 }
 
-// ─── Main ───────────────────────────────────────────────
-function getStreams(tmdbId, mediaType, season, episode) {
+// ─── Main: now accepts metadata from Nuvio ──────────────
+function getStreams(tmdbId, mediaType, season, episode, metadata) {
   return __async(this, null, function* () {
     var t0 = Date.now();
     console.log("[Cinemana] === " + mediaType + "/" + tmdbId + " S" + (season || "?") + "E" + (episode || "?") + " ===");
 
-    if (!TMDB_API_KEY || TMDB_API_KEY.indexOf("YOUR") !== -1) {
-      console.log("[Cinemana] ERROR: TMDB API key not set");
-      return [];
-    }
-
     try {
-      var tmdbInfo = yield getTMDBInfo(tmdbId, mediaType);
-      if (!tmdbInfo) { console.log("[Cinemana] TMDB failed"); return []; }
+      // 1) Try Nuvio metadata first — zero network cost
+      var tmdbInfo = extractFromNuvioContext(metadata);
+
+      // 2) Fallback: Nuvio's internal TMDB gateway (no API key needed)
+      if (!tmdbInfo || tmdbInfo.titles.length === 0) {
+        console.log("[Cinemana] No metadata from Nuvio, using Nuvio TMDB proxy");
+        tmdbInfo = yield getTMDBInfoViaNuvio(tmdbId, mediaType);
+      } else {
+        console.log("[Cinemana] Using Nuvio metadata: " + tmdbInfo.titles.slice(0, 3).join(" | "));
+      }
+
+      if (!tmdbInfo || tmdbInfo.titles.length === 0) {
+        console.log("[Cinemana] No titles available, aborting");
+        return [];
+      }
+
       console.log("[Cinemana] lang=" + tmdbInfo.originalLanguage + " year=" + tmdbInfo.year);
 
-      // Search SUB and DUB in parallel!
       var [subMatch, dubMatch] = yield Promise.all([
         searchAndScore(tmdbInfo, mediaType, false),
         searchAndScore(tmdbInfo, mediaType, true)
