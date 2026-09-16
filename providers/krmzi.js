@@ -1,22 +1,19 @@
 /**
  * Krmizi / Qrmzi provider for Nuvio — STRICT 1080p ONLY Edition
- * Version: 1.1.1
+ * Version: 1.3.3
  *
- * Based on renoomon's krmizi provider, modified to return ONLY 1080p streams.
- * All non-1080p qualities are filtered out at every stage.
- *
- * v1.1.0: Fixed multi-season episode numbering.
- * v1.1.1: Fixed resolveAnaPlayer rejecting non-season-1 episodes
- *          when no explicit S#E# info exists in the player page.
- *         Qrmzi uses continuous numbering across seasons (S1E1=1..S1E18=18, S2E1=19...).
- *         When Nuvio sends season>1, we compute the site episode number and search for it.
+ * v1.3.0: Dynamic season boundary detection.
+ * v1.3.1: Fixed P.A.C.K.E.R unpacker radix handling.
+ * v1.3.2: Fixed findExactEpisode S1 boundary check.
+ * v1.3.3: Removed S3 fallback, added S0/S-1 rejection,
+ *         fixed verifyEpisodePage S1 boundary check.
  */
 
 "use strict";
 
 var cheerio = require("cheerio-without-node-native");
 
-var VERSION = "1.1.1";
+var VERSION = "1.3.3";
 var TMDB_BASE = "https://www.themoviedb.org";
 var SITE_BASES = [
   "https://www.qrmzi.tv",
@@ -26,9 +23,6 @@ var SITE_BASES = [
 var UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 var MAX_SERIES_PROBES = 6;
 var MAX_SERVERS = 8;
-
-/** Episodes in season 1 on Qrmzi — used to compute continuous episode numbers for later seasons. */
-var EPISODES_PER_SEASON = 18;
 
 function log(key, value) {
   var suffix = value === undefined || value === null || value === "" ? "" : " " + String(value);
@@ -241,44 +235,89 @@ function episodeNumber(value) {
   return match ? parseInt(match[1], 10) : NaN;
 }
 
-/**
- * Compute the episode number as it appears on Qrmzi.
- * Qrmzi uses continuous numbering across seasons (no season separators).
- * e.g. S1 has 18 episodes, so S2E1 = episode 19 on the site.
- */
-function siteEpisodeNumber(wantedSeason, wantedEpisode) {
-  if (wantedSeason <= 1) return wantedEpisode;
-  return (wantedSeason - 1) * EPISODES_PER_SEASON + wantedEpisode;
-}
-
 function explicitSeasonEpisode(value) {
   var match = String(value || "").match(/\bS(\d{1,2})E(\d{1,4})\b/i);
-  if (!match) match = String(value || "").match(/(?:season|الموسم)[\s._-]*(\d{1,2})[\s._-]*(?:episode|الحلقة)[\s._-]*(\d{1,4})/i);
+  if (!match) match = String(value || "").match(/(?:season|الموسم|الجزء)[\s._-]*(\d{1,2})[\s._-]*(?:episode|الحلقة)[\s._-]*(\d{1,4})/i);
   return match ? { season: parseInt(match[1], 10), episode: parseInt(match[2], 10) } : null;
 }
 
-/**
- * Extract season number from free text (e.g. series title, URL).
- * e.g. "الموسم الثاني" → 2, "season 2" → 2, "S2" → 2
- */
 function seasonFromText(text) {
   var value = String(text || "");
-  var match = value.match(/الموسم\s+(الأول|الاول|الثاني|الثالث|الرابع|الخامس|السادس|السابع|الثامن|التاسع|العاشر)/i);
+  if (!value) return NaN;
+
+  var arabicOrdinals = {
+    "الاول": 1, "الأول": 1, "الثاني": 2, "الثالث": 3, "الرابع": 4,
+    "الخامس": 5, "السادس": 6, "السابع": 7, "الثامن": 8,
+    "التاسع": 9, "العاشر": 10
+  };
+
+  var match = value.match(/(?:الجزء|الموسم|موسم)\s+(الأول|الاول|الثاني|الثالث|الرابع|الخامس|السادس|السابع|الثامن|التاسع|العاشر)/i);
   if (match) {
-    var arabicOrdinals = {
-      "الأول": 1, "الاول": 1, "الثاني": 2, "الثالث": 3, "الرابع": 4,
-      "الخامس": 5, "السادس": 6, "السابع": 7, "الثامن": 8,
-      "التاسع": 9, "العاشر": 10
-    };
-    var normalizedOrdinal = match[1].replace(/أ/g, "ا");
-    if (arabicOrdinals[normalizedOrdinal]) return arabicOrdinals[normalizedOrdinal];
-    if (arabicOrdinals[match[1]]) return arabicOrdinals[match[1]];
+    var ord = match[1];
+    if (arabicOrdinals[ord]) return arabicOrdinals[ord];
+    var normalizedOrd = ord.replace(/أ/g, "ا");
+    if (arabicOrdinals[normalizedOrd]) return arabicOrdinals[normalizedOrd];
   }
-  match = value.match(/(?:الموسم|season|موسم)[\s._-]*(\d{1,2})/i);
+
+  match = value.match(/(?:الجزء|الموسم|موسم)\s*[:\-]?\s*(\d{1,2})/i);
   if (match) return parseInt(match[1], 10);
-  match = value.match(/\bS(\d{1,2})\b/i);
+
+  match = value.match(/(?:season|part)\s*[:\-]?\s*(\d{1,2})/i);
   if (match) return parseInt(match[1], 10);
+
+  match = value.match(/\bS(\d{1,2})(?![\dEe])/i);
+  if (match) return parseInt(match[1], 10);
+
   return NaN;
+}
+
+function findSeasonBoundaries(seriesHtml) {
+  var $ = cheerio.load(seriesHtml);
+  var boundaries = [];
+
+  $('.sec-line article.postEp').each(function (_, element) {
+    var block = $(element);
+    var ribbon = block.find('span.ribbon').first().text().trim();
+    if (ribbon.indexOf('نهاية الموسم') >= 0) {
+      var epNumText = block.find('.episodeNum span').last().text().trim();
+      var epNum = parseInt(epNumText, 10);
+      if (!isNaN(epNum)) {
+        boundaries.push(epNum);
+      }
+    }
+  });
+
+  return boundaries;
+}
+
+function siteEpisodeNumber(wantedSeason, wantedEpisode, boundaries) {
+  if (wantedSeason <= 1) return wantedEpisode;
+
+  var offset = 0;
+
+  if (boundaries.length >= wantedSeason - 1) {
+    for (var i = 0; i < wantedSeason - 1; i++) {
+      offset += boundaries[i];
+    }
+  } else if (boundaries.length > 0) {
+    for (var j = 0; j < boundaries.length; j++) {
+      offset += boundaries[j];
+    }
+    var remainingSeasons = wantedSeason - 1 - boundaries.length;
+    offset += remainingSeasons * 13;
+  } else {
+    offset = (wantedSeason - 1) * 13;
+  }
+
+  return offset + wantedEpisode;
+}
+
+/**
+ * v1.3.3 — Check if S1 episode is within valid range.
+ */
+function isValidS1Episode(wantedEpisode, boundaries) {
+  if (!boundaries || boundaries.length === 0) return true;
+  return wantedEpisode <= boundaries[0];
 }
 
 function parseTmdbPage(html) {
@@ -474,103 +513,102 @@ function resolveSeries(metadata) {
 }
 
 /**
- * Find the exact episode on the series page.
- *
- * v1.1.0 — Multi-season fix:
- * Qrmzi numbers episodes continuously across seasons (S1E1=1 … S1E18=18, S2E1=19 …).
- * When Nuvio asks for season>1, we compute the site episode number and search for it.
- * We try BOTH the site number (primary) and the raw episode number (fallback).
+ * v1.3.3 — Find episode with strict validation.
  */
 function findExactEpisode(series, wantedSeason, wantedEpisode) {
+  // FIX: Reject invalid seasons
+  if (wantedSeason < 1 || wantedEpisode < 1) {
+    logFailure("invalid_season_or_episode", "S" + wantedSeason + "E" + wantedEpisode);
+    return null;
+  }
+
   var $ = cheerio.load(series.html);
+  var boundaries = findSeasonBoundaries(series.html);
+  var siteEp = siteEpisodeNumber(wantedSeason, wantedEpisode, boundaries);
+
+  log("season_boundaries", boundaries.length ? boundaries.join(",") : "none");
+  log("computed_site_episode", "S" + wantedSeason + "E" + wantedEpisode + " → site ep " + siteEp);
+
+  // FIX: For S1, check episode is within S1 range
+  if (wantedSeason === 1 && boundaries.length > 0) {
+    if (!isValidS1Episode(wantedEpisode, boundaries)) {
+      logFailure("s1_episode_out_of_range", "S1 ends at episode " + boundaries[0]);
+      return null;
+    }
+  }
+
   var matches = [];
   var seen = {};
-
-  /* Episode numbers to try, in priority order. */
-  var siteEp = siteEpisodeNumber(wantedSeason, wantedEpisode);
-  var candidates = [];
-  if (siteEp !== wantedEpisode) candidates.push(siteEp);
-  candidates.push(wantedEpisode);
-
-  log("episode_candidates", "candidates=" + candidates.join(",") +
-      " (wanted=S" + wantedSeason + "E" + wantedEpisode +
-      ", siteEp=" + siteEp + ")");
 
   $('.sec-line article.postEp a[href*="/episode/"]').each(function (_, element) {
     var anchor = wrap($, element);
     var url = absUrl(anchor.attr("href"), series.url);
     if (!url || seen[urlKey(url)]) return;
+
     var identity = [
       anchor.attr("title") || "",
-      anchor.find(".episodeNum").first().text() || "",
-      anchor.find(".title").first().text() || "",
-      anchor.find("img").first().attr("alt") || "",
+      anchor.find('.episodeNum span').last().text() || "",
+      anchor.find("img").attr("alt") || "",
       url
     ].join(" ");
+
     var epNum = episodeNumber(identity);
-    if (candidates.indexOf(epNum) === -1) return;
-
-    /* Explicit S#E# must match the wanted season. */
-    var explicit = explicitSeasonEpisode(identity);
-    if (explicit && explicit.season !== wantedSeason) return;
-
-    seen[urlKey(url)] = true;
-    matches.push({ url: url, identity: identity, explicit: explicit, epNum: epNum });
+    if (epNum === siteEp) {
+      seen[urlKey(url)] = true;
+      matches.push({ url: url, identity: identity, epNum: epNum });
+    }
   });
 
-  if (!matches.length) {
-    logFailure("episode_not_found", "S" + wantedSeason + "E" + wantedEpisode +
-               " (site candidates: " + candidates.join(",") + ")");
+  if (matches.length === 1) {
+    log("episode_match", "site_ep=" + siteEp);
+    return matches[0];
+  }
+
+  if (matches.length > 1) {
+    logFailure("episode_ambiguous", "matches=" + matches.length + " site_ep=" + siteEp);
     return null;
   }
 
-  /* ── Priority 1: exact match on the site episode number ── */
-  var siteMatches = [];
-  for (var i = 0; i < matches.length; i++) {
-    if (matches[i].epNum === siteEp) siteMatches.push(matches[i]);
-  }
-  if (siteMatches.length === 1) {
-    log("episode_match", "site_ep=" + siteEp);
-    return siteMatches[0];
-  }
+  // FIX: Fallback ONLY for S2, with strict S1 boundary check
+  if (siteEp !== wantedEpisode && wantedSeason === 2) {
+    log("fallback_raw_episode", "trying ep=" + wantedEpisode);
+    var rawMatches = [];
+    var rawSeen = {};
 
-  /* ── Priority 2: exact match on the raw episode number ── */
-  var rawMatches = [];
-  for (var j = 0; j < matches.length; j++) {
-    if (matches[j].epNum === wantedEpisode) rawMatches.push(matches[j]);
-  }
-  if (rawMatches.length === 1) {
-    log("episode_match", "raw_ep=" + wantedEpisode);
-    return rawMatches[0];
-  }
+    $('.sec-line article.postEp a[href*="/episode/"]').each(function (_, element) {
+      var anchor = wrap($, element);
+      var url = absUrl(anchor.attr("href"), series.url);
+      if (!url || rawSeen[urlKey(url)]) return;
 
-  /* ── Priority 3: disambiguate via explicit S#E# ── */
-  if (matches.length > 1) {
-    var explicitMatches = [];
-    for (var k = 0; k < matches.length; k++) {
-      if (matches[k].explicit && matches[k].explicit.season === wantedSeason &&
-          matches[k].explicit.episode === wantedEpisode) {
-        explicitMatches.push(matches[k]);
+      var identity = [
+        anchor.attr("title") || "",
+        anchor.find('.episodeNum span').last().text() || "",
+        anchor.find("img").attr("alt") || "",
+        url
+      ].join(" ");
+
+      var epNum = episodeNumber(identity);
+      var seasonNum = seasonFromText(identity);
+
+      // Must match episode AND (no season info OR correct season)
+      if (epNum === wantedEpisode && (isNaN(seasonNum) || seasonNum === wantedSeason)) {
+        // FIX: For S2, must be AFTER S1 boundary
+        if (boundaries.length > 0 && epNum <= boundaries[0]) {
+          return; // This is S1, not S2
+        }
+
+        rawSeen[urlKey(url)] = true;
+        rawMatches.push({ url: url, identity: identity, epNum: epNum });
       }
+    });
+
+    if (rawMatches.length === 1) {
+      log("episode_match", "raw_ep=" + wantedEpisode);
+      return rawMatches[0];
     }
-    if (explicitMatches.length === 1) return explicitMatches[0];
   }
 
-  /* ── Priority 4: single match fallback ── */
-  if (matches.length === 1) {
-    var single = matches[0];
-    /* If the single match has no explicit season info, try to infer from series context. */
-    if (!single.explicit && wantedSeason > 1) {
-      var seriesSeason = seasonFromText(series.heading + " " + series.url);
-      if (!isNaN(seriesSeason) && seriesSeason !== wantedSeason) {
-        logFailure("season_mismatch_single", "seriesSeason=" + seriesSeason);
-        return null;
-      }
-    }
-    return single;
-  }
-
-  logFailure("episode_ambiguous", "matches=" + matches.length);
+  logFailure("episode_not_found", "wanted=S" + wantedSeason + "E" + wantedEpisode + " site_ep=" + siteEp);
   return null;
 }
 
@@ -582,16 +620,23 @@ function directMedia(url) {
   return /\.(?:m3u8|mp4)(?:[?#]|$)/i.test(String(url || ""));
 }
 
-/**
- * Verify the episode page and extract the player URL.
- *
- * v1.1.0 — Multi-season fix:
- * When wantedSeason > 1 and the site uses continuous numbering,
- * the episode page will show the site episode number (e.g. 19) not the
- * raw episode number (e.g. 1). We accept either.
- */
 function verifyEpisodePage(series, episodeCandidate, wantedSeason, wantedEpisode) {
-  var siteEp = siteEpisodeNumber(wantedSeason, wantedEpisode);
+  var boundaries = findSeasonBoundaries(series.html);
+  var siteEp = siteEpisodeNumber(wantedSeason, wantedEpisode, boundaries);
+
+  // FIX: Reject invalid seasons at verification level too
+  if (wantedSeason < 1 || wantedEpisode < 1) {
+    logFailure("invalid_season_or_episode");
+    return null;
+  }
+
+  // FIX: For S1, check episode is within S1 range
+  if (wantedSeason === 1 && boundaries.length > 0) {
+    if (!isValidS1Episode(wantedEpisode, boundaries)) {
+      logFailure("s1_episode_out_of_range", "S1 ends at episode " + boundaries[0]);
+      return null;
+    }
+  }
 
   return fetchTextInfo(episodeCandidate.url, series.url, "").then(function (result) {
     var $ = cheerio.load(result.html);
@@ -601,11 +646,15 @@ function verifyEpisodePage(series, episodeCandidate, wantedSeason, wantedEpisode
       $("title").first().text() || ""
     ].join(" ");
     var headingEpNum = episodeNumber(heading);
+    var headingSeason = seasonFromText(heading);
 
-    /* Accept both the raw episode number and the computed site episode number. */
-    if (headingEpNum !== wantedEpisode && headingEpNum !== siteEp) {
-      logFailure("episode_identity_mismatch", "number: heading=" + headingEpNum +
-                 " wanted=" + wantedEpisode + " site=" + siteEp);
+    if (!isNaN(headingEpNum) && headingEpNum !== wantedEpisode && headingEpNum !== siteEp) {
+      logFailure("episode_identity_mismatch", "number: heading=" + headingEpNum + " wanted=" + wantedEpisode + " site=" + siteEp);
+      return null;
+    }
+
+    if (!isNaN(headingSeason) && headingSeason !== wantedSeason) {
+      logFailure("episode_identity_mismatch", "season: heading=" + headingSeason + " wanted=" + wantedSeason);
       return null;
     }
 
@@ -627,45 +676,19 @@ function verifyEpisodePage(series, episodeCandidate, wantedSeason, wantedEpisode
       return null;
     }
 
-    /*
-     * Season verification.
-     * If explicit S#E# info exists in the player URL or heading, it must match.
-     * Otherwise, check for season hints in heading / series link / series page.
-     * If no season info found anywhere, allow it (the episode page itself is authority).
-     */
     var explicit = explicitSeasonEpisode(playerUrl + " " + heading);
     if (explicit) {
-      if (explicit.season !== wantedSeason) {
+      var seasonOk = explicit.season === wantedSeason || explicit.episode === siteEp;
+      var episodeOk = explicit.episode === wantedEpisode || explicit.episode === siteEp;
+
+      if (!seasonOk) {
         logFailure("player_identity_mismatch", "S" + explicit.season + "E" + explicit.episode);
         return null;
       }
-      if (explicit.episode !== wantedEpisode && explicit.episode !== siteEp) {
-        logFailure("player_identity_mismatch", "episode: explicit=" + explicit.episode +
-                   " wanted=" + wantedEpisode + " site=" + siteEp);
+      if (!episodeOk) {
+        logFailure("player_identity_mismatch", "episode: explicit=" + explicit.episode + " wanted=" + wantedEpisode + " site=" + siteEp);
         return null;
       }
-    } else if (wantedSeason > 1) {
-      var headingSeason = seasonFromText(heading);
-      var seriesLinkSeason = seasonFromText(seriesLink.text() || "");
-      var seriesPageSeason = seasonFromText(series.heading + " " + series.url);
-
-      if (!isNaN(headingSeason) && headingSeason !== wantedSeason) {
-        logFailure("player_identity_mismatch", "heading_season=" + headingSeason);
-        return null;
-      }
-      if (!isNaN(seriesLinkSeason) && seriesLinkSeason !== wantedSeason) {
-        logFailure("player_identity_mismatch", "seriesLink_season=" + seriesLinkSeason);
-        return null;
-      }
-      if (!isNaN(seriesPageSeason) && seriesPageSeason !== wantedSeason) {
-        logFailure("player_identity_mismatch", "seriesPage_season=" + seriesPageSeason);
-        return null;
-      }
-      /*
-       * No season info found anywhere — allow it.
-       * The episode page itself is the authority, and we already verified
-       * the episode number matches (either raw or computed site number).
-       */
     }
 
     return {
@@ -763,14 +786,6 @@ function parseHlsMaster(text, masterUrl) {
   return variants;
 }
 
-/*
- * The CDN family used by AnaPlayer publishes its available rendition set in
- * the master URL itself, for example: video_,l,n,h,x,.urlset/master.m3u8.
- * Expanding this deterministic form avoids losing qualities when Nuvio can
- * play the media but its sandbox cannot read the master playlist response.
- *
- * STRICT 1080p ONLY: we only keep the 'x' variant (1080p).
- */
 function variantsFromEncodedMaster(masterUrl) {
   var value = String(masterUrl || "");
   var match = value.match(/^(https?:\/\/[^?#]+\/)([^\/?#]+)_((?:,[a-z0-9]+)+),?\.urlset\/master\.m3u8(\?[^#]*)?$/i);
@@ -782,7 +797,6 @@ function variantsFromEncodedMaster(masterUrl) {
   var seen = {};
   for (var i = 0; i < codes.length; i++) {
     var code = String(codes[i] || "").toLowerCase();
-    // STRICT 1080p ONLY — skip everything except 'x'
     if (code !== "x") continue;
     if (!qualities[code] || seen[code]) continue;
     seen[code] = true;
@@ -804,7 +818,7 @@ function isHlsPlaylistText(text) {
 
 function reliableHlsSource(url, referer, serverName) {
   var identity = String(url || "") + " " + String(referer || "") + " " + String(serverName || "");
-  return /cdnplus(?:\.space)?|dailymotion|dai\.ly|dmcdn/i.test(identity);
+  return /cdnplus(?:\.space)?|dailymotion|dai\.ly|dmcdn|brqz\.online/i.test(identity);
 }
 
 function unescapePackedString(value) {
@@ -816,10 +830,9 @@ function unescapePackedString(value) {
     .replace(/\\t/g, "\t");
 }
 
-/* Dean Edwards P.A.C.K.E.R. decoding without eval or executing page code. */
 function unpackDeanEdwards(source) {
   var text = String(source || "");
-  var pattern = /eval\(function\(p,a,c,k,e,d\)\{[\s\S]*?\}\('((?:\\.|[^'])*)',(\d+),(\d+),'((?:\\.|[^'])*)'\.split\('\|'\)\)\)/g;
+  var pattern = /eval\(function\(p,a,c,k,e,d\)\{[\s\S]*?\}\('((?:\\.|[^'])*)',(\d+),(\d+),'((?:\\.|[^'])*)'\.split\('\|'\)\)/g;
   var output = "";
   var match;
   var decodedCount = 0;
@@ -831,10 +844,23 @@ function unpackDeanEdwards(source) {
     var keys = unescapePackedString(match[4]).split("|");
     if (radix < 2 || radix > 36 || count > 2000 || payload.length > 250000) continue;
 
-    while (count--) {
-      if (!keys[count]) continue;
-      payload = payload.replace(new RegExp("\\b" + count.toString(radix) + "\\b", "g"), keys[count]);
+    var digits = "0123456789abcdefghijklmnopqrstuvwxyz";
+
+    for (var i = count - 1; i >= 0; i--) {
+      if (!keys[i]) continue;
+      var token = "";
+      var n = i;
+      if (n === 0) {
+        token = "0";
+      } else {
+        while (n > 0) {
+          token = digits[n % radix] + token;
+          n = Math.floor(n / radix);
+        }
+      }
+      payload = payload.replace(new RegExp("\\b" + token + "\\b", "g"), keys[i]);
     }
+
     output += "\n" + payload;
     decodedCount++;
   }
@@ -874,7 +900,7 @@ function mediaEntriesFromHtml(html) {
 }
 
 function supportedDirectEmbed(url) {
-  return /^https?:\/\/[^\/]*(?:cdnplus\.space|mp4plus\.cyou|anafast\.cyou|vidoba\.cyou|vidspeed\.space|larhu\.website)\//i.test(String(url || ""));
+  return /^https?:\/\/[^\/]*(?:cdnplus\.space|mp4plus\.cyou|anafast\.cyou|vidoba\.cyou|vidspeed\.space|larhu\.website|brqz\.online)\//i.test(String(url || ""));
 }
 
 function dailymotionId(url) {
@@ -915,17 +941,11 @@ function collectAnaServers(html, playerUrl) {
   return servers.slice(0, MAX_SERVERS);
 }
 
-/*
- * STRICT 1080p ONLY:
- * We filter here so non-1080p streams never enter the result array.
- * For HLS masters we still fetch to parse variants, but only 1080p variants are kept.
- */
 function addMediaEntry(entry, referer, serverName, streams, seenStreams) {
   var url = entry && entry.url ? entry.url : "";
   if (!url || seenStreams[url]) return Promise.resolve();
   var declaredQuality = entry.quality || qualityFromText(serverName) || qualityFromText(url);
 
-  // STRICT 1080p ONLY — skip direct MP4/M3U8 that isn't 1080p
   if (declaredQuality && declaredQuality !== "1080p") {
     return Promise.resolve();
   }
@@ -971,7 +991,6 @@ function addMediaEntry(entry, referer, serverName, streams, seenStreams) {
     }
 
     for (var i = 0; i < variants.length; i++) {
-      // STRICT 1080p ONLY — skip non-1080p HLS variants
       if (variants[i].quality !== "1080p" || seenStreams[variants[i].url]) continue;
       seenStreams[variants[i].url] = true;
       streams.push(streamObject(variants[i].url, referer, variants[i].quality, serverName));
@@ -993,7 +1012,6 @@ function resolveDailymotion(url, referer, serverName, streams, seenStreams) {
         for (var j = 0; j < list.length; j++) {
           if (!list[j] || !list[j].url) continue;
           var q = qualityFromText(keys[i]);
-          // STRICT 1080p ONLY
           if (q !== "1080p") continue;
           jobs.push(addMediaEntry(
             { url: list[j].url, quality: q },
@@ -1025,13 +1043,18 @@ function resolveEmbedTarget(target, expected, streams, seenStreams) {
 
   return fetchTextInfo(url, target.referer, originOf(target.referer)).then(function (result) {
     var explicit = explicitSeasonEpisode(result.html + " " + result.url);
-    var siteEp = siteEpisodeNumber(expected.season, expected.episode);
     if (explicit) {
-      if (explicit.season !== expected.season) {
+      var boundaries = findSeasonBoundaries(result.html);
+      var siteEp = siteEpisodeNumber(expected.season, expected.episode, boundaries);
+
+      var seasonOk = explicit.season === expected.season || explicit.episode === siteEp;
+      var episodeOk = explicit.episode === expected.episode || explicit.episode === siteEp;
+
+      if (!seasonOk) {
         logFailure("player_identity_mismatch", target.label + " S" + explicit.season);
         return;
       }
-      if (explicit.episode !== expected.episode && explicit.episode !== siteEp) {
+      if (!episodeOk) {
         logFailure("player_identity_mismatch", target.label + " E" + explicit.episode);
         return;
       }
@@ -1048,26 +1071,25 @@ function resolveEmbedTarget(target, expected, streams, seenStreams) {
 function resolveAnaPlayer(playerUrl, episodeUrl, wantedSeason, wantedEpisode) {
   var streams = [];
   var seenStreams = {};
-  var siteEp = siteEpisodeNumber(wantedSeason, wantedEpisode);
 
   return fetchTextInfo(playerUrl, episodeUrl, originOf(episodeUrl)).then(function (player) {
     var explicit = explicitSeasonEpisode(player.url + " " + player.html);
     if (explicit) {
-      if (explicit.season !== wantedSeason) {
-        logFailure("player_identity_mismatch", "AnaPlayer S" + explicit.season);
+      var boundaries = findSeasonBoundaries(player.html);
+      var siteEp = siteEpisodeNumber(wantedSeason, wantedEpisode, boundaries);
+
+      var seasonOk = explicit.season === wantedSeason || explicit.episode === siteEp;
+      var episodeOk = explicit.episode === wantedEpisode || explicit.episode === siteEp;
+
+      if (!seasonOk) {
+        logFailure("player_identity_mismatch", "AnaPlayer S" + explicit.season + "E" + explicit.episode);
         return [];
       }
-      if (explicit.episode !== wantedEpisode && explicit.episode !== siteEp) {
-        logFailure("player_identity_mismatch", "AnaPlayer E" + explicit.episode);
+      if (!episodeOk) {
+        logFailure("player_identity_mismatch", "AnaPlayer E" + explicit.episode + " wanted=" + wantedEpisode + " site=" + siteEp);
         return [];
       }
     }
-    /*
-     * No explicit S#E# info found in the player page.
-     * v1.1.0: We already verified the episode number in verifyEpisodePage().
-     * The player URL came from that verified episode page, so we trust it.
-     * Do NOT reject here — allow the streams to be resolved.
-     */
 
     var servers = collectAnaServers(player.html, player.url);
     if (!servers.length) {
@@ -1170,7 +1192,6 @@ function getStreams(tmdbId, mediaType, season, episode) {
 
   log("tmdb_id", id);
   log("request", "S" + wantedSeason + "E" + wantedEpisode);
-  log("site_episode", siteEpisodeNumber(wantedSeason, wantedEpisode));
 
   var context = { metadata: null, series: null, episodeCandidate: null, verifiedEpisode: null };
 
@@ -1191,6 +1212,10 @@ function getStreams(tmdbId, mediaType, season, episode) {
       }
       context.series = series;
       log("matched_series", series.url);
+
+      var boundaries = findSeasonBoundaries(series.html);
+      log("season_boundaries", boundaries.length ? boundaries.join(",") : "none");
+
       context.episodeCandidate = findExactEpisode(series, wantedSeason, wantedEpisode);
       if (!context.episodeCandidate) {
         logFailure("episode_not_found", "S" + wantedSeason + "E" + wantedEpisode);
@@ -1206,9 +1231,6 @@ function getStreams(tmdbId, mediaType, season, episode) {
       return resolvePlayer(verifiedEpisode);
     })
     .then(function (streams) {
-      // ================================================================
-      // STRICT 1080p ONLY — Final safety filter
-      // ================================================================
       var filtered = (streams || []).filter(function (s) {
         return (s.quality || "") === "1080p";
       });
