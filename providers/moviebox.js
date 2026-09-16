@@ -1,7 +1,7 @@
 // MovieBox Scraper for Nuvio
 // Strict 1080p ONLY | Dual Audio (VERIFIED) | Subtitles | Ultra-strict matching
 // React Native / Hermes compatible — Promise chains only
-// TMDB key: read from Nuvio-injected global only. No embedded key.
+// TMDB key: read lazily from Nuvio injection. NO top-level declaration.
 
 var __async = (__this, __arguments, generator) => {
   return new Promise((resolve, reject) => {
@@ -18,9 +18,17 @@ var __async = (__this, __arguments, generator) => {
 
 var API_BASE      = "https://h5-api.aoneroom.com/wefeed-h5api-bff";
 var PLAYER_DOMAIN = "https://netfilm.world";
-var TMDB_API_KEY  = (typeof TMDB_API_KEY !== "undefined" && TMDB_API_KEY) || "";
 var UA            = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36";
 var FETCH_TIMEOUT = 15000;
+
+// ─── TMDB key — lazy read, no top-level var (avoids shadowing) ────
+function getTmdbKey() {
+  var k = "";
+  try { if (typeof TMDB_API_KEY !== "undefined" && TMDB_API_KEY) k = TMDB_API_KEY; } catch (e) {}
+  if (!k) { try { if (typeof globalThis !== "undefined" && globalThis.TMDB_API_KEY) k = globalThis.TMDB_API_KEY; } catch (e) {} }
+  if (!k) { try { if (typeof global !== "undefined" && global.TMDB_API_KEY) k = global.TMDB_API_KEY; } catch (e) {} }
+  return String(k || "");
+}
 
 function safeFetch(url, options, timeout) {
   var ms = timeout || FETCH_TIMEOUT;
@@ -128,13 +136,14 @@ function findStrictMatch(results, tmdbTitle, tmdbYear) {
 
 // ─── TMDB Metadata ───────────────────────────────────────
 function getTmdbMeta(tmdbId, mediaType) {
-  if (!TMDB_API_KEY) {
+  var key = getTmdbKey();
+  if (!key) {
     console.log("[MovieBox] TMDB_API_KEY not provided by Nuvio");
     return Promise.resolve(null);
   }
 
   var tmdbPath = mediaType === "movie" ? "movie" : "tv";
-  var tmdbUrl = "https://api.themoviedb.org/3/" + tmdbPath + "/" + tmdbId + "?api_key=" + TMDB_API_KEY;
+  var tmdbUrl = "https://api.themoviedb.org/3/" + tmdbPath + "/" + tmdbId + "?api_key=" + key;
 
   return safeFetch(tmdbUrl, {
     headers: { "User-Agent": UA, "Accept": "application/json" }
@@ -268,7 +277,6 @@ function getMovieBoxDetail(detailPath, token) {
 // ─── Verify Dub Title ────────────────────────────────────
 function verifyDubTitle(detailPath, expectedTitle, token) {
   return getMovieBoxDetail(detailPath, token).then(function(detail) {
-    var subject = (detail.dubs && detail.dubs[0]) ? detail.dubs[0] : {};
     return safeFetch(API_BASE + "/detail?detailPath=" + detailPath, {
       headers: {
         "User-Agent": UA,
@@ -464,9 +472,6 @@ function getMovieBoxSubtitles(subjectId, detailPath, season, episode, streamId, 
     return Promise.resolve([]);
   }
 
-  var se = season || 1;
-  var ep = episode || 1;
-
   var capUrl = API_BASE + "/subject/caption?format=" + streamFormat + "&id=" + streamId +
     "&subjectId=" + subjectId + "&detailPath=" + detailPath;
 
@@ -514,7 +519,8 @@ function getStreams(tmdbId, mediaType, season, episode) {
     var type = mediaType === "movie" ? "movie" : "series";
     console.log("[MovieBox] === " + type + "/" + tmdbId + " S" + (season || 1) + "E" + (episode || 1) + " ===");
 
-    if (!TMDB_API_KEY) {
+    var key = getTmdbKey();
+    if (!key) {
       console.log("[MovieBox] ERROR: TMDB_API_KEY not provided by Nuvio");
       return [];
     }
