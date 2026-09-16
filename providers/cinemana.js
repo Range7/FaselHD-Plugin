@@ -1,5 +1,5 @@
 // Cinemana Scraper for Nuvio Local Scrapers
-// Nuvio-native: uses metadata passed by Nuvio, no hardcoded TMDB key
+// Uses api.themoviedb.org directly (Nuvio's fetch interceptor injects the key)
 // Quality tiers: 4K > 1080p
 // FAST: parallel SUB/DUB search | Multi-language | Hermes-safe
 
@@ -14,9 +14,9 @@ var __async = (__this, __arguments, generator) => {
 
 var CINEMANA_BASE = "https://cinemana.shabakaty.com/api/android";
 
-// ─── Nuvio's internal TMDB proxy (لا يحتاج مفتاح) ─────
-// عدّل الرابط ده لو نسخة Nuvio عندك بتستخدم gateway مختلف
-var NUVIO_TMDB_BASE = "https://api.nuvio.app/tmdb";
+// ─── TMDB: Nuvio's fetch interceptor auto-injects the API key ─────
+// Same approach as the working Cee scraper
+var TMDB_BASE = "https://api.themoviedb.org/3";
 
 var UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36";
 var FETCH_TIMEOUT = 8e3;
@@ -111,16 +111,23 @@ function extractFromNuvioContext(metadata) {
   };
 }
 
-// ─── Fallback: Nuvio's internal TMDB proxy ──────────────
-function getTMDBInfoViaNuvio(tmdbId, mediaType) {
+// ─── TMDB via direct api.themoviedb.org (Nuvio injects key) ─
+function getTMDBInfo(tmdbId, mediaType) {
   return __async(this, null, function* () {
     var type = mediaType === "movie" ? "movie" : "tv";
-    var url = NUVIO_TMDB_BASE + "/" + type + "/" + tmdbId + "?append_to_response=translations,alternative_titles&language=en-US";
+    var urlMain  = TMDB_BASE + "/" + type + "/" + tmdbId + "?language=en-US";
+    var urlTrans = TMDB_BASE + "/" + type + "/" + tmdbId + "/translations";
+    var urlAlts  = TMDB_BASE + "/" + type + "/" + tmdbId + "/alternative_titles";
 
     try {
-      var r = yield safeFetch(url, null, 8e3);
-      if (!r.ok) { console.log("[Cinemana] Nuvio TMDB proxy returned " + r.status); return null; }
-      var d = yield r.json();
+      var [rMain, rTrans, rAlts] = yield Promise.all([
+        safeFetch(urlMain, null, 8e3),
+        safeFetch(urlTrans, null, 8e3),
+        safeFetch(urlAlts, null, 8e3)
+      ]);
+
+      if (!rMain.ok) { console.log("[Cinemana] TMDB main returned " + rMain.status); return null; }
+      var d = yield rMain.json();
 
       var titleEn = d.title || d.name || "";
       var origTitle = d.original_title || d.original_name || titleEn;
@@ -133,8 +140,9 @@ function getTMDBInfoViaNuvio(tmdbId, mediaType) {
       if (titleEn) titles.push(titleEn);
       if (origTitle && origTitle !== titleEn) titles.push(origTitle);
 
-      if (d.translations && d.translations.translations) {
-        var list = d.translations.translations;
+      if (rTrans.ok) {
+        var dTrans = yield rTrans.json();
+        var list = dTrans.translations || [];
         for (var i = 0; i < list.length; i++) {
           var t = list[i];
           if (t && t.data) {
@@ -144,18 +152,19 @@ function getTMDBInfoViaNuvio(tmdbId, mediaType) {
         }
       }
 
-      if (d.alternative_titles) {
-        var alts = d.alternative_titles.titles || d.alternative_titles.results || [];
+      if (rAlts.ok) {
+        var dAlts = yield rAlts.json();
+        var alts = dAlts.titles || dAlts.results || [];
         for (var j = 0; j < alts.length; j++) {
           var a = alts[j].title || alts[j].name || "";
           if (a && titles.indexOf(a) === -1) titles.push(a);
         }
       }
 
-      console.log("[Cinemana] Nuvio TMDB titles (" + titles.length + "): " + titles.slice(0, 5).join(" | "));
+      console.log("[Cinemana] TMDB titles (" + titles.length + "): " + titles.slice(0, 5).join(" | "));
       return { titles: titles, originalLanguage: origLang, year: year };
     } catch (e) {
-      console.log("[Cinemana] Nuvio TMDB error: " + e.message);
+      console.log("[Cinemana] TMDB error: " + e.message);
       return null;
     }
   });
@@ -363,10 +372,10 @@ function getStreams(tmdbId, mediaType, season, episode, metadata) {
       // 1) metadata من Nuvio (بدون شبكة)
       var tmdbInfo = extractFromNuvioContext(metadata);
 
-      // 2) fallback: بوابة Nuvio الداخلية
+      // 2) fallback: TMDB مباشر (Nuvio بيحقن المفتاح)
       if (!tmdbInfo || tmdbInfo.titles.length === 0) {
-        console.log("[Cinemana] No metadata from Nuvio, using Nuvio TMDB proxy");
-        tmdbInfo = yield getTMDBInfoViaNuvio(tmdbId, mediaType);
+        console.log("[Cinemana] No metadata from Nuvio, calling TMDB directly");
+        tmdbInfo = yield getTMDBInfo(tmdbId, mediaType);
       } else {
         console.log("[Cinemana] Using Nuvio metadata: " + tmdbInfo.titles.slice(0, 3).join(" | "));
       }
