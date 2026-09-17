@@ -4,16 +4,17 @@
 
 ---
 
-📁 هيكل المستودع
+📁 ### تفاصيل الملفات
 
-المسار الوصف
-manifest.json ملف التعريف الرئيسي الذي يقرأه Nuvio
-providers/ ملفات JavaScript لكل مزوّد
-update-user-agent.js سكربت Node.js لتحديث الـ User-Agent
-.github/workflows/ GitHub Actions للتحديث التلقائي
+| # | المسار | الوصف |
+|---|---|---|
+| 1 | `manifest.json` | ملف التعريف الرئيسي الذي يقرأه Nuvio — يحتوي على قائمة المزوّدين وإعداداتهم |
+| 2 | `providers/` | ملفات JavaScript لكل مزوّد على حدة |
+| 3 | `update-user-agent.js` | سكربت Node.js يحدّث قيمة الـ User-Agent في جميع ملفات المزوّدين |
+| 4 | `.github/workflows/` | سير عمل GitHub Actions لتشغيل سكربت التحديث تلقائياً |
+| 5 | `README.md` | هذا الملف — تعليمات التثبيت وشرح المزوّدين |
 
 ---
-
 🧩 المزوّدون
 
 1. FaselHD 
