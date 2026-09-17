@@ -1,6 +1,9 @@
 /**
  * 4khdhub - Built from src/4khdhub/
- * Modified: only 4K and 1080p streams, sorted 4K first
+ * Modified:
+ *  - Only 4K and 1080p, largest per tier
+ *  - Name format: "4KHDHub 4K 5.6GB"
+ *  - Anime (Animation + Japanese origin) skipped
  */
 var __create = Object.create;
 var __defProp = Object.defineProperty;
@@ -131,6 +134,18 @@ function parseSize(value) {
   return match ? `${match[1]} ${match[2].toUpperCase()}` : "Unknown";
 }
 
+function sizeToBytes(sizeStr) {
+  var m = String(sizeStr || "").match(/([\d.]+)\s*(TB|GB|MB|KB)/i);
+  if (!m) return 0;
+  var n = parseFloat(m[1]);
+  var u = m[2].toUpperCase();
+  if (u === "TB") return n * 1024 * 1024 * 1024 * 1024;
+  if (u === "GB") return n * 1024 * 1024 * 1024;
+  if (u === "MB") return n * 1024 * 1024;
+  if (u === "KB") return n * 1024;
+  return n;
+}
+
 function parseReleaseDetails(value, fallbackQuality = "Unknown") {
   var _a, _b, _c, _d, _e, _f;
   const text = String(value || "").replace(/_+/g, " ");
@@ -180,6 +195,12 @@ function qualityRank(quality) {
   return 0;
 }
 
+function shortQualityLabel(rank) {
+  if (rank === 3) return "4K";
+  if (rank === 2) return "1080p";
+  return "";
+}
+
 function getMetadata(tmdbId, mediaType) {
   return __async(this, null, function* () {
     const endpoint = mediaType === "tv" || mediaType === "series" ? "tv" : "movie";
@@ -190,9 +211,22 @@ function getMetadata(tmdbId, mediaType) {
     if (!response.ok) throw new Error(`TMDB HTTP ${response.status}`);
     const data = yield response.json();
     const date = endpoint === "tv" ? data.first_air_date : data.release_date;
+
+    var genres = data.genres || [];
+    var hasAnimation = genres.some(function (g) {
+      return g && g.name && g.name.toLowerCase() === "animation";
+    });
+    var originalLang = data.original_language || "";
+    var originCountry = data.origin_country || [];
+
+    var isAnime = hasAnimation && (originalLang === "ja" || originCountry.indexOf("JP") !== -1);
+
     return {
       title: endpoint === "tv" ? data.name : data.title,
-      year: date ? Number(date.slice(0, 4)) : null
+      year: date ? Number(date.slice(0, 4)) : null,
+      isAnime: isAnime,
+      originalLang: originalLang,
+      originCountry: originCountry
     };
   });
 }
@@ -340,11 +374,17 @@ function getStreams(tmdbId, mediaType, season = null, episode = null) {
     try {
       console.log(`[4KHDHub] Looking up ${mediaType} ${tmdbId}`);
       const metadata = yield getMetadata(tmdbId, mediaType);
+
+      if (metadata.isAnime) {
+        console.log(`[4KHDHub] Anime detected, skipping: ${metadata.title}`);
+        return [];
+      }
+
       const pageUrl = yield findPage(metadata, isSeries, season);
       if (!pageUrl) return [];
       const extracted = yield extractStreams(pageUrl, isSeries, season, episode);
       const seen = {};
-      const streams = extracted
+      const allStreams = extracted
         .filter((stream) => isDirectVideo(stream.url))
         .filter((stream) => {
           if (seen[stream.url]) return false;
@@ -365,11 +405,39 @@ function getStreams(tmdbId, mediaType, season = null, episode = null) {
           return r === 3 || r === 2;
         });
 
+      // ── Keep only the largest per quality tier ──
+      var best4K = null, best4KBytes = -1;
+      var best1080 = null, best1080Bytes = -1;
+      for (var i = 0; i < allStreams.length; i++) {
+        var s = allStreams[i];
+        var rank = qualityRank(s.quality);
+        var bytes = sizeToBytes(s.size);
+        if (rank === 3 && bytes > best4KBytes) { best4K = s; best4KBytes = bytes; }
+        else if (rank === 2 && bytes > best1080Bytes) { best1080 = s; best1080Bytes = bytes; }
+      }
+
+      var streams = [];
+      if (best4K) streams.push(best4K);
+      if (best1080) streams.push(best1080);
+
+      // ── Display name: "4KHDHub 4K 5.6GB" ──
+      for (var j = 0; j < streams.length; j++) {
+        var st = streams[j];
+        var rank = qualityRank(st.quality);
+        var qLabel = shortQualityLabel(rank);
+        var sizeLabel = (st.size && st.size !== "Unknown") ? st.size : "";
+        var nameParts = ["4KHDHub"];
+        if (qLabel) nameParts.push(qLabel);
+        if (sizeLabel) nameParts.push(sizeLabel);
+        st.name = nameParts.join(" ");
+      }
+
+      // ترتيب: 4K فوق 1080p
       streams.sort(function (a, b) {
         return qualityRank(b.quality) - qualityRank(a.quality);
       });
 
-      console.log(`[4KHDHub] Returning ${streams.length} direct stream(s)`);
+      console.log(`[4KHDHub] Returning ${streams.length} stream(s) — 4K kept: ${best4K ? "yes" : "no"}, 1080p kept: ${best1080 ? "yes" : "no"}`);
       return streams;
     } catch (error) {
       console.error(`[4KHDHub] Error: ${error.message}`);
