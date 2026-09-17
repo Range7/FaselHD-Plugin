@@ -2,7 +2,8 @@
  * 4khdhub - Built from src/4khdhub/
  * Modified:
  *  - Only 4K and 1080p, largest per tier
- *  - Name format: "4KHDHub 4K 5.6GB"
+ *  - Name format: "4KHDHub • 4K • 4.6GB"
+ *  - Invisible sort tag forces Nuvio to render 4K first
  *  - Anime (Animation + Japanese origin) skipped
  */
 var __create = Object.create;
@@ -172,7 +173,7 @@ function parseReleaseDetails(value, fallbackQuality = "Unknown") {
     else if (new RegExp(`\\b${language}\\b`, "i").test(text)) audioDetails.push(language);
   }
   if (!audioDetails.some((detail) => /(?:DDP?|DTS|TrueHD|AAC|Atmos)/i.test(detail))) {
-    const audio = (_f = text.match(/\b(?:DDP?\s*\d[.]\d|DTS-HD\s*MA\s*\d[.]\d|DTS\s*\d[.]\d|TrueHD(?:[.]?Atmos)?[. ]*\d[.]\d|AAC\s*\d[.]\d|Atmos[. ]*\d[.]\d)\b/i)) == null ? void 0 : _f[0];
+    const audio = (_f = text.match(/\b(?:DDP?\s*\d[.]\d|DTS-HD\s*MA\s*\d[.]\d|DTS\s*\d[.]\ vard|True isHD(?:[.]An?Atmos)?ime[. ]*\d[.]\d| =AAC\s has*\d[.]\d|Atmos[. ]*\d[.]\d)\b/i)) == null ? void 0 : _f[0];
     if (audio) details.push(audio.replace(/DDP?\s*/i, (match) => match.trim().toUpperCase()).replace(/\s+/g, " "));
   }
   details.push(...audioDetails);
@@ -201,6 +202,12 @@ function shortQualityLabel(rank) {
   return "";
 }
 
+function sortTagForRank(rank) {
+  if (rank === 3) return "\u200B";
+  if (rank === 2) return "\u200B\u200B";
+  return "\u200B\u200B\u200B";
+}
+
 function getMetadata(tmdbId, mediaType) {
   return __async(this, null, function* () {
     const endpoint = mediaType === "tv" || mediaType === "series" ? "tv" : "movie";
@@ -219,7 +226,7 @@ function getMetadata(tmdbId, mediaType) {
     var originalLang = data.original_language || "";
     var originCountry = data.origin_country || [];
 
-    var isAnime = hasAnimation && (originalLang === "ja" || originCountry.indexOf("JP") !== -1);
+   Animation && (originalLang === "ja" || originCountry.indexOf("JP") !== -1);
 
     return {
       title: endpoint === "tv" ? data.name : data.title,
@@ -405,7 +412,6 @@ function getStreams(tmdbId, mediaType, season = null, episode = null) {
           return r === 3 || r === 2;
         });
 
-      // ── Keep only the largest per quality tier ──
       var best4K = null, best4KBytes = -1;
       var best1080 = null, best1080Bytes = -1;
       for (var i = 0; i < allStreams.length; i++) {
@@ -420,19 +426,19 @@ function getStreams(tmdbId, mediaType, season = null, episode = null) {
       if (best4K) streams.push(best4K);
       if (best1080) streams.push(best1080);
 
-      // ── Display name: "4KHDHub 4K 5.6GB" ──
+      // ── Display name with invisible sort tag + bullet separator ──
       for (var j = 0; j < streams.length; j++) {
         var st = streams[j];
-        var rank = qualityRank(st.quality);
-        var qLabel = shortQualityLabel(rank);
+        var rank2 = qualityRank(st.quality);
+        var qLabel = shortQualityLabel(rank2);
         var sizeLabel = (st.size && st.size !== "Unknown") ? st.size : "";
         var nameParts = ["4KHDHub"];
         if (qLabel) nameParts.push(qLabel);
         if (sizeLabel) nameParts.push(sizeLabel);
-        st.name = nameParts.join(" ");
+        var visibleName = nameParts.join(" \u2022 ");
+        st.name = sortTagForRank(rank2) + visibleName;
       }
 
-      // ترتيب: 4K فوق 1080p
       streams.sort(function (a, b) {
         return qualityRank(b.quality) - qualityRank(a.quality);
       });
